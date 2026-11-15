@@ -221,6 +221,7 @@ impl Game<'_> {
         let now_typing = ui.typing();
         self.ui.options = ui;
         self.options_show_keyboard_on_focus(was_typing, now_typing);
+        self.options_close_keyboard_for_binding();
         self.handle_option_events(events)
     }
     /// Pops the soft keyboard when an options search box gains focus.
@@ -232,6 +233,14 @@ impl Game<'_> {
             self.android_show_keyboard();
         }
         let _ = (was_typing, now_typing);
+    }
+    /// Hides the native IME as soon as a keybinding starts capture: Winit
+    /// defers ordinary Android hardware keys to the IME while it is active.
+    fn options_close_keyboard_for_binding(&mut self) {
+        #[cfg(target_os = "android")]
+        if self.ui.options.selected_key.is_some() {
+            crate::platform::hide();
+        }
     }
     pub(super) fn options_drag(&mut self) -> Result<()> {
         let size = self.gui_size();
@@ -256,6 +265,7 @@ impl Game<'_> {
         let mut ui = std::mem::take(&mut self.ui.options);
         let events = ui.key(&mut self.settings, &self.gui.atlas, key, text);
         self.ui.options = ui;
+        self.options_close_keyboard_for_binding();
         self.handle_option_events(events)
     }
     /// Ctrl+A/C/V/X in the options' search boxes; false when none has focus.

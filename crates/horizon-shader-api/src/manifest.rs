@@ -103,6 +103,10 @@ struct Raw {
     license: Option<String>,
     #[serde(default)]
     shared: Vec<String>,
+    /// Metadata used by some third-party shader formats; this API does not
+    /// implement the light declarations, but it can still read the stages.
+    #[serde(default)]
+    lights: Option<toml::Value>,
     sky: Option<Stage>,
     material: Option<Stage>,
     #[serde(default)]
@@ -156,6 +160,10 @@ fn default_columns() -> u8 {
 impl Manifest {
     pub fn parse(text: &str) -> Result<Manifest, String> {
         let raw: Raw = toml::from_str(text).map_err(|e| format!("{MANIFEST}: {e}"))?;
+        // Kept as opaque TOML above so third-party `[[lights]]` declarations
+        // do not block otherwise-compatible stages. The current shader API
+        // doesn't consume this metadata.
+        let _ignored_light_metadata = &raw.lights;
         let err = |e: String| format!("{MANIFEST}: {e}");
         if raw.schema != SCHEMA {
             return Err(err(format!(

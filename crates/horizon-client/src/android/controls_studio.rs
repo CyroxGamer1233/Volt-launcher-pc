@@ -121,9 +121,10 @@ const STUDIO_PALETTE: [[u8; 3]; 24] = [
     [127, 255, 212],
 ];
 
-/// Pojav keycode names for the Mapping slots and the radio-list picker:
-/// the SPECIAL_* rows first, then the full keyboard, exactly the names
-/// PojavLauncher shows (`SPACE`, `LEFT_SHIFT`, `KP_1`, ...).
+/// Pojav-style keycode names for the Mapping slots and picker: the SPECIAL_*
+/// rows first, then every physical key the input layer can translate. Keeping
+/// the full `available_keys` set lets imported layouts with F13+, international,
+/// or keypad keys be edited instead of silently hiding their binding.
 fn keycode_entries() -> &'static [(String, &'static str)] {
     use std::sync::OnceLock;
     static ENTRIES: OnceLock<Vec<(String, &'static str)>> = OnceLock::new();
@@ -175,36 +176,6 @@ fn keycode_entries() -> &'static [(String, &'static str)] {
                 continue;
             }
             let name = token.strip_prefix("key.keyboard.").unwrap_or(token);
-            // Keep the picker at Pojav's GLFW set: skip exotic USB-HID keys.
-            if name.starts_with("world")
-                || name.starts_with("international")
-                || name.starts_with("lang")
-                || name.contains("memory")
-                || matches!(
-                    name,
-                    "help"
-                        | "select"
-                        | "again"
-                        | "undo"
-                        | "cut"
-                        | "copy"
-                        | "paste"
-                        | "find"
-                        | "keypad.hash"
-                        | "keypad.clear"
-                        | "keypad.clear.entry"
-                        | "keypad.left.parenthesis"
-                        | "keypad.right.parenthesis"
-                        | "keypad.backspace"
-                )
-            {
-                continue;
-            }
-            if let Some(f) = name.strip_prefix('f')
-                && f.parse::<u32>().is_ok_and(|n| n > 12)
-            {
-                continue;
-            }
             let mut disp = name.to_ascii_uppercase().replace('.', "_");
             if let Some(rest) = disp.strip_prefix("KEYPAD_") {
                 disp = format!("KP_{rest}");
@@ -2573,4 +2544,23 @@ fn wrap_text(ui: &Ui, text: &str, face: Face, size: f32, width: f32) -> Vec<Stri
         lines.push(line);
     }
     lines
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn key_picker_includes_every_supported_physical_key() {
+        let entries = keycode_entries();
+        for &(token, _) in horizon_client::keybinds::available_keys() {
+            if token == "key.keyboard.unknown" {
+                continue;
+            }
+            assert!(
+                entries.iter().any(|(_, candidate)| *candidate == token),
+                "missing key from Controls Studio picker: {token}"
+            );
+        }
+    }
 }

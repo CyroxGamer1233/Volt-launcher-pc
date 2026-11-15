@@ -73,9 +73,11 @@ gpu_ms = 1.5               # optional: the GPU time the pack aims to add (0 to 1
 ```
 
 An option's `override` has the type of its kind: `bool`, `f32`, `i32`, or `u32` for a choice (the index of the
-value). The pack holds only the manifest, the `.wgsl` files it names (each used, UTF-8, 256 KiB at most),
-`README.md`, `LICENSE` (`.md`, `.txt`) and `icon.png`, under plain paths, 8 MiB in all. A `.hshader` is built
-the same way every time (files in path order, fixed dates), so a pack's SHA-256 depends only on its files.
+value). For compatibility, this build accepts `[[lights]]` metadata as opaque TOML but ignores it: Horizon's shader
+API does not implement light declarations yet. The pack holds only the manifest, the `.wgsl` files it names (each used,
+UTF-8, 256 KiB at most), `README.md`, `LICENSE` (`.md`, `.txt`) and `icon.png`, under plain paths, 8 MiB in all.
+A `.hshader` is built the same way every time (files in path order, fixed dates), so a pack's SHA-256 depends only on its
+files.
 
 ## Guide, reference and examples
 

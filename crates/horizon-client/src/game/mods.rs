@@ -431,6 +431,9 @@ impl Game<'_> {
     pub(super) fn mod_screen_key(&mut self, _key: winit::keyboard::KeyCode) -> bool {
         false
     }
+    pub(super) fn mod_screen_waiting_for_key(&self) -> bool {
+        false
+    }
     pub(super) fn mod_screen_scroll(&mut self, _delta: f32) {}
 }
 
@@ -1037,6 +1040,13 @@ impl Game<'_> {
         };
         self.bind_mod_key(value.unwrap_or("key.keyboard.unknown").to_owned());
         true
+    }
+    /// Whether the in-game mod screen is capturing a physical key.
+    pub(super) fn mod_screen_waiting_for_key(&self) -> bool {
+        self.mods
+            .screen
+            .as_ref()
+            .is_some_and(|screen| screen.binding.is_some())
     }
     /// The layout the mod screen's widgets get at `h`: (widget, top,
     /// height), the column being `COLUMN` wide down the middle.

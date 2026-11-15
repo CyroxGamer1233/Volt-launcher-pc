@@ -15399,6 +15399,7 @@ impl Game<'_> {
         }
         #[cfg(target_os = "android")]
         if matches!(&event,WindowEvent::KeyboardInput {event,..} if event.state==ElementState::Pressed && event.logical_key==winit::keyboard::Key::Named(winit::keyboard::NamedKey::BrowserBack))
+            && !self.android_waiting_for_binding()
         {
             if self.volt_studio_back() {
                 return;
@@ -15680,13 +15681,15 @@ impl Game<'_> {
         if let WindowEvent::ModifiersChanged(m) = &event {
             self.modifiers = m.state();
         }
+        let binding_capture = (self.screen == Screen::Options && self.options_waiting_for_key())
+            || (self.screen == Screen::Mod && self.mod_screen_waiting_for_key());
         // Fullscreen is a window shortcut, before screens consume keyboard input.
         if let WindowEvent::KeyboardInput { event, .. } = &event
             && event.state == ElementState::Pressed
             && let PhysicalKey::Code(key) = event.physical_key
             && horizon_client::keybinds::key_name(key)
                 == Some(self.settings.keys.get("key.fullscreen"))
-            && !(self.screen == Screen::Options && self.options_waiting_for_key())
+            && !binding_capture
         {
             self.last_input = Instant::now();
             if !event.repeat {
@@ -15699,6 +15702,7 @@ impl Game<'_> {
         // it works with chat, a sign or a book open.
         if let WindowEvent::KeyboardInput { event, .. } = &event
             && event.state == ElementState::Pressed
+            && !binding_capture
             && let PhysicalKey::Code(key) = event.physical_key
         {
             self.last_input = Instant::now();
@@ -15718,7 +15722,7 @@ impl Game<'_> {
                 (_, false) => KeyAction::Press,
                 (_, true) => KeyAction::Repeat,
             };
-            if self.debug_key(key, action) {
+            if !binding_capture && self.debug_key(key, action) {
                 return;
             }
         }
