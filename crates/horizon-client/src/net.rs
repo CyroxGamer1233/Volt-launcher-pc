@@ -599,8 +599,8 @@ fn run(
         }
     };
     status(send, "Joining world...");
-    c.send(&cfg::Serverbound::ClientInformation(info).encode())
-        .map_err(e)?;
+    // ClientHandshakePacketListenerImpl.handleLoginFinished sends the brand
+    // before client information.
     c.send(
         &cfg::Serverbound::CustomPayload(cfg::CustomPayload {
             channel: "minecraft:brand".into(),
@@ -609,6 +609,8 @@ fn run(
         .encode(),
     )
     .map_err(e)?;
+    c.send(&cfg::Serverbound::ClientInformation(info).encode())
+        .map_err(e)?;
     // With the brand reading "vanilla", Horizon hosts learn what this client
     // is from an explicit hello on the mod-message channel instead. Vanilla
     // servers discard unknown custom payloads silently.
@@ -1319,6 +1321,76 @@ pub fn ping_legacy(address: &str, timeout: Duration) -> Result<LegacyStatus, Str
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn direct_login_sends_vanilla_brand_before_client_information() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let session = Session::connect(
+            &format!("127.0.0.1:{port}"),
+            "Probe",
+            None,
+            cfg::ClientInformation::new(8),
+            Arc::new(Language::new()),
+            PathBuf::new(),
+            None,
+        );
+        let (stream, _) = listener.accept().unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        let mut server = Connection::from_stream(stream).unwrap();
+        let (id, body) = server.recv().unwrap();
+        let handshake::Serverbound::Intention(packet) =
+            handshake::Serverbound::decode(id, &body).unwrap()
+        else {
+            panic!("expected login handshake")
+        };
+        assert_eq!((packet.host.as_str(), packet.port), ("127.0.0.1", port));
+        assert_eq!(packet.intent, handshake::LOGIN);
+        server.recv().unwrap(); // login profile
+        server
+            .send(
+                &login::Clientbound::LoginFinished(login::LoginFinished {
+                    profile: login::GameProfile {
+                        uuid: 1,
+                        name: "Probe".into(),
+                        properties: vec![],
+                    },
+                    session: 1,
+                })
+                .encode(),
+            )
+            .unwrap();
+        let (id, body) = server.recv().unwrap();
+        assert!(matches!(
+            login::Serverbound::decode(id, &body).unwrap(),
+            login::Serverbound::LoginAcknowledged(_)
+        ));
+        let (id, body) = server.recv().unwrap();
+        assert_eq!(
+            cfg::Serverbound::decode(id, &body).unwrap(),
+            cfg::Serverbound::CustomPayload(cfg::CustomPayload {
+                channel: "minecraft:brand".into(),
+                data: b"\x07vanilla".to_vec(),
+            })
+        );
+        let (id, body) = server.recv().unwrap();
+        assert!(matches!(
+            cfg::Serverbound::decode(id, &body).unwrap(),
+            cfg::Serverbound::ClientInformation(_)
+        ));
+        let (id, body) = server.recv().unwrap();
+        assert_eq!(
+            cfg::Serverbound::decode(id, &body).unwrap(),
+            cfg::Serverbound::CustomPayload(cfg::CustomPayload {
+                channel: horizon_protocol::mod_net::CHANNEL.into(),
+                data: Vec::new(),
+            })
+        );
+        drop(server);
+        drop(session);
+    }
 
     #[test]
     fn legacy_ping_request_is_the_1_6_ping_host_packet() {

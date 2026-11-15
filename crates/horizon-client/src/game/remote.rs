@@ -2826,14 +2826,11 @@ impl Game<'_> {
                     false,
                     horizon_client::level_loading::Reason::Other,
                 );
-                let info = self
-                    .settings
-                    .client_information(client_view_distance(self.settings.render_distance));
+                // The configuration phase already sent ClientInformation;
+                // vanilla sends it again only when an option changes.
                 if let Some(r) = self.remote.as_mut() {
-                    r.sent_info = info.clone();
                     r.skin_synced = false;
                 }
-                self.send(S::ClientInformation(info));
                 if let Some(local_uuid) = self.remote.as_ref().map(|r| r.profile)
                     && let Some(data) = horizon_client::skins::build_volt_skin_packet(local_uuid)
                 {

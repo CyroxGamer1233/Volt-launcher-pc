@@ -1666,3 +1666,21 @@ fn mod_report_status(report: &str, file: &str) -> Option<String> {
     }
     Some(status)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::shader_catalog::Origin;
+
+    #[test]
+    fn shader_catalog_defaults_to_horizon_but_keeps_an_explicit_source() {
+        assert_eq!(Config::default().shader_source, Origin::Horizon);
+        let old_config: Config = serde_json::from_value(serde_json::json!({})).unwrap();
+        assert_eq!(old_config.shader_source, Origin::Horizon);
+        let chosen: Config = serde_json::from_value(serde_json::json!({
+            "shader_source": "modrinth"
+        }))
+        .unwrap();
+        assert_eq!(chosen.shader_source, Origin::Modrinth);
+    }
+}
