@@ -44,8 +44,14 @@ pub struct Manifest {
 }
 
 /// One stage: the WGSL file that defines its function.
+///
+/// Unknown keys are *ignored*, not refused. Published packs in the registry
+/// carry keys this reader does not use (one port ships `fog = false` in its
+/// `[[post]]` blocks), and `deny_unknown_fields` turned every one of those into
+/// a hard "TOML parse error ... unknown field ... expected `file` or `name`",
+/// which failed the whole download with nothing usable on screen. Vanilla
+/// resource packs ignore keys they do not know; so does this.
 #[derive(Clone, Debug, Deserialize, PartialEq)]
-#[serde(deny_unknown_fields)]
 pub struct Stage {
     pub file: String,
     /// Shown in the GPU time overlay; the file name when absent.
@@ -119,8 +125,9 @@ struct Raw {
     budget: RawBudget,
 }
 
+// Tolerant on purpose: an option key from a newer schema must not make a
+// whole pack uninstallable.
 #[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
 struct RawOption {
     id: String,
     name: String,
@@ -141,8 +148,8 @@ struct RawBudget {
     gpu_ms: Option<f64>,
 }
 
+// Tolerant like `RawOption`: unknown layout keys are carried, not refused.
 #[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
 struct RawPage {
     id: String,
     name: String,

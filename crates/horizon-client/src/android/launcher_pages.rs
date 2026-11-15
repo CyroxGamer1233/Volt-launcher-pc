@@ -503,6 +503,41 @@ mod liquid_home_layout_tests {
         assert_eq!(area, [126.0, 12.0, 484.0, 500.0]);
     }
 
+    /// The bug this pins: the controls were laid out in a "visible frame"
+    /// narrower than the screen, so the destination rail stopped at the inset
+    /// edge and left a dead strip of wallpaper to its right (measured on a
+    /// 2412 px screen: rail ended at 2144, layout width 2160). The rail must
+    /// sit on the real right edge of the surface, exactly inset by its own
+    /// margin and nothing else.
+    #[test]
+    fn destination_rail_sits_on_the_true_screen_edge() {
+        let area = [0.0, 0.0, 2412.0, 1080.0];
+        let x = liquid_right_rail_x(area, 2412.0);
+        let outer_edge = x + LIQUID_RIGHT_RAIL_WIDTH;
+        // Outer edge + inset == the surface's right edge, to the pixel.
+        assert!((outer_edge + LIQUID_RIGHT_RAIL_INSET - 2412.0).abs() < 0.001,
+            "rail outer edge {outer_edge} should leave exactly {LIQUID_RIGHT_RAIL_INSET} of inset");
+        // And nothing more: the strip beyond the rail is the inset only.
+        let dead_strip = 2412.0 - outer_edge;
+        assert!(dead_strip <= LIQUID_RIGHT_RAIL_INSET + 0.001, "dead strip {dead_strip}");
+    }
+
+    /// Play is centred on the *screen*, not on the space left over after the
+    /// rails: with the visible frame fixed, both are the same thing, but the
+    /// distinction is what the old layout got wrong.
+    #[test]
+    fn play_pill_is_centred_on_the_screen() {
+        let w = 2412.0;
+        let (rail_w, right_rail_w) = (LIQUID_LEFT_RAIL_WIDTH, LIQUID_RIGHT_RAIL_WIDTH);
+        // The dashboard's own arithmetic, mirrored from draw_liquid_home.
+        let content_w = (w - rail_w - right_rail_w - 32.0).max(340.0);
+        let px0 = 8.0 + rail_w + 16.0 + (content_w - 320.0) * 0.5;
+        let centre = px0 + 320.0 * 0.5;
+        // Screen centre, allowing for the left rail's odd 16 dp gutter.
+        let rails_centre = (LIQUID_LEFT_RAIL_INSET + rail_w + 16.0 + (w - LIQUID_RIGHT_RAIL_INSET - right_rail_w)) * 0.5;
+        assert!((centre - rails_centre).abs() <= 1.0, "{centre} vs {rails_centre}");
+    }
+
     /// The dashboard Play pill is centred in the column between the two rails,
     /// which is where players read "middle bottom" on a landscape phone.
     #[test]
@@ -6682,23 +6717,27 @@ impl Launcher {
         ui.batch.fill(&gui.atlas, 0.0, 0.0, full_w * scale, full_h * scale, theme::BG());
         draw_launcher_scene(&mut ui, full_w, full_h, self.launch_start.elapsed().as_secs_f32());
         let scene_end = ui.batch_mut().vertices.len();
+        // Only vertical insets move the controls. The launcher is a full-bleed
+        // immersive surface: its scene is painted across `full_w`, so shrinking
+        // the control width to a horizontal "visible frame" left a dead strip of
+        // wallpaper between the destination rail and the real screen edge, and
+        // pulled the centred PLAY pill left of centre (measured on a 2412 px
+        // screen: layout 2160 px, rail short by 213 px, PLAY at 44.4%). Rails
+        // carry their own edge insets, so they belong on the true edges.
         let mut offset = [0.0f32; 2];
-        if let Some([left, top, right, bottom]) = crate::native_ime::launcher_visible_bounds() {
+        if let Some([_, top, _, bottom]) = crate::native_ime::launcher_visible_bounds() {
             let density = ui.density;
-            let x0 = (left as f32 / density).min(full_w);
             let y0 = (top as f32 / density).min(full_h);
-            let x1 = (right as f32 / density).min(full_w);
             let y1 = (bottom as f32 / density).min(full_h);
-            if x1 - x0 >= 120.0 && y1 - y0 >= 120.0 {
-                offset = [x0, y0];
-                ui.w = x1 - x0;
+            if y1 - y0 >= 120.0 {
+                offset = [0.0, y0];
                 ui.h = y1 - y0;
             }
         }
         let (w, h) = (ui.w, ui.h);
-        // Controls are drawn in visible-area coordinates, then translated by
-        // `offset`. The visible width already accounts for both insets, which
-        // need not be symmetric (for example, a side cutout or transient bar).
+        // Controls are drawn in surface coordinates, then translated by
+        // `offset` (vertical only). `w` is the full surface width, so the rails
+        // land on the real screen edges and the Play pill centres on screen.
         let visible_right = w;
         ui.cursor = (self.cursor.0 as f32 / ui.density - offset[0],
                      self.cursor.1 as f32 / ui.density - offset[1]);
