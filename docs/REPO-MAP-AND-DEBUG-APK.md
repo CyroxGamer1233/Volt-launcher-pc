@@ -254,3 +254,47 @@ or a `v*` tag does.
   ABIs `all`, profile `release`, `publish_release` checked.
 - `publish_release` is true for `refs/heads/android`, `v*` tags, or that explicit
   dispatch, so session-branch runs only ever produce artifacts.
+
+### Second round of player feedback (screenshots 2026-11-15 23:10)
+Confirmed the player runs the new build: the Discord row, the bottom-left profile
+chip and the red "Retry" + reason on the Wisdom Shaders card are all from the
+first pass.
+
+**Fixed, with the mechanism proven:**
+
+1. **Right rail not on the far right.** Measured the screenshot (2412x1080): left
+   rail flush at x=0, right rail's outer edge at x=2145, then **213 px of bare
+   wallpaper** to the right edge. Density 1.875 (from the 8 dp inset = 15 px),
+   rail 90.7 dp == `LIQUID_RIGHT_RAIL_WIDTH` (88). The layout surface was
+   **2160 px, not 2412**: `launcher_visible_bounds()` returned a frame 252 px
+   narrower than the screen, and `ui.w` was set from it, so `surface_right`
+   (`= w`) placed the rail 252 px in. The same shrink pulled PLAY to 44.4 %
+   instead of 50 % (predicted 44.39 % from the constants, matching the observed
+   44.4 %). Fix: only *vertical* insets move controls now; the width stays the
+   full surface, which is what the scene is already painted across. Tests
+   `destination_rail_sits_on_the_true_screen_edge` and
+   `play_pill_is_centred_on_the_screen` pin both.
+
+2. **Shaders still not downloading.** The on-screen reason was the answer:
+   `horizon-shaders.toml: TOML parse error ... unknown field 'fog', expected
+   'file' or 'name'`. `Stage`, `RawOption` and `RawPage` had
+   `deny_unknown_fields`, so one published registry pack writing `fog = false`
+   in its `[[post]]` blocks aborted its whole download. Unknown keys are now
+   ignored (vanilla's behaviour for keys it does not read); top-level typos are
+   still refused. Test `a_stage_ignores_keys_this_build_does_not_read`.
+
+3. **Controls missing in game.** A full `Page::Controls` existed but was only
+   reachable through Options > Controls. The pause menu now has a Controls
+   button (vanilla `options.controls`, verified real via the language key list)
+   opening it directly; the menu grid grew 24 dp for the row and the pause-menu
+   test was corrected (it had a `- 6.0` fudge that only worked for the old
+   height).
+
+**Not fixed — captcha ("still says captcha failed").** No evidence yet, and the
+previous guess (the mod_net hello) was evidently not the cause. What is ruled
+out by reading: the login hello carries the correct offline UUID
+(`OfflinePlayer:<name>` md5); the configuration phase now volunteers nothing but
+`ClientInformation` + `minecraft:brand` (brand is exactly "vanilla"); no
+known-packs entry; chat answers go out as a plain `serverbound_chat_message`
+with `signature: None`. To pin it down rather than guess again, the next step
+needs the exact kick text plus the client brand the server sees.
