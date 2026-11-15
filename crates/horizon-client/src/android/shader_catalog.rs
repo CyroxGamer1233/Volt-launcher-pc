@@ -3,18 +3,33 @@ use crate::browser::{self, Kind, Project, Source, SourceId, Version, installed};
 use serde::{Deserialize, Serialize};
 use std::{fs, path::Path};
 
-#[derive(Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Origin {
     #[default]
     Horizon,
     Modrinth,
+    CurseForge,
+    Both,
 }
 impl Origin {
-    pub fn source(self) -> SourceId {
+    pub fn label(self) -> &'static str {
         match self {
-            Self::Horizon => SourceId::Horizon,
-            Self::Modrinth => SourceId::Modrinth,
+            Self::Horizon => "Horizon",
+            Self::Modrinth => "Modrinth",
+            Self::CurseForge => "CurseForge",
+            Self::Both => "Both",
+        }
+    }
+
+    /// The shader catalog's source button cycles through the native registry
+    /// and both classic ZIP catalogs without taking extra space for four pills.
+    pub fn next_shader_source(self) -> Self {
+        match self {
+            Self::Horizon => Self::Modrinth,
+            Self::Modrinth => Self::CurseForge,
+            Self::CurseForge => Self::Both,
+            Self::Both => Self::Horizon,
         }
     }
 }
@@ -39,10 +54,10 @@ pub fn install(
     progress: &dyn Fn(&str, f32),
 ) -> Result<usize, String> {
     if project.kind != Kind::Shader
-        || project.source != SourceId::Modrinth
+        || !matches!(project.source, SourceId::Modrinth | SourceId::CurseForge)
         || source.id() != project.source
     {
-        return Err("Expected a Modrinth shader pack".into());
+        return Err("Expected a Modrinth or CurseForge shader pack".into());
     }
     let versions = source.versions(project)?;
     let v = version(&versions).ok_or("No downloadable shader ZIP is available")?;
@@ -238,6 +253,24 @@ mod tests {
             p,
         )
     }
+    #[test]
+    fn shader_source_cycle_reaches_every_catalog() {
+        let mut seen = Vec::new();
+        let mut source = Origin::Horizon;
+        for _ in 0..4 {
+            seen.push(source);
+            source = source.next_shader_source();
+        }
+        let expected = [
+            Origin::Horizon,
+            Origin::Modrinth,
+            Origin::CurseForge,
+            Origin::Both,
+        ];
+        assert_eq!(seen.as_slice(), expected.as_slice());
+        assert_eq!(source, Origin::Horizon);
+    }
+
     #[test]
     fn version_prefers_current_game_then_newest_zip_and_skips_blocked_files() {
         let (f, _) = fixture();

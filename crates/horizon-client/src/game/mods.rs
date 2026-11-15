@@ -14,6 +14,7 @@ use horizon_client::{
     mod_list,
 };
 use std::{path::PathBuf, time::Duration};
+
 #[cfg(feature = "mods")]
 use {
     super::Screen,
@@ -35,6 +36,17 @@ use {
     std::time::Instant,
     winit::{event::MouseButton, keyboard::KeyCode},
 };
+
+/// The Android mods watcher treats the first observation of `horizon-mods.txt`
+/// as a real state transition too. In particular, `None -> Some` can mean the
+/// file was created after startup, not just discovered there for the first time.
+#[cfg(any(target_os = "android", test))]
+pub(super) fn mods_file_stamp_changed(
+    previous: &Option<std::time::SystemTime>,
+    current: &Option<std::time::SystemTime>,
+) -> bool {
+    previous != current
+}
 
 #[derive(Default)]
 pub(super) struct ModsState {
@@ -200,16 +212,43 @@ pub(super) fn content_root(
     paths.retain(|p| !dev.contains(p));
     paths.extend(dev.iter().cloned());
     let mut mods: Vec<ContentMod> = Vec::new();
+    // What each installed mod file came to (`mod_content::REPORT_FILE`):
+    // the Installed page shows these lines, and the player can send the
+    // file when something looks wrong in a world.
+    let mut report: Vec<String> = Vec::new();
     for path in &paths {
-        let Ok(package) = Package::read(path) else {
-            continue;
+        let file = path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let package = match Package::read(path) {
+            Ok(p) => p,
+            Err(e) => {
+                report.push(format!("mod file {file}: unreadable package: {e}"));
+                continue;
+            }
         };
         let m = &package.manifest;
+        for w in &package.warnings {
+            report.push(format!("mod {} ({file}): warning: {w}", m.id));
+        }
         let on = enabled.contains(&m.id) || dev.contains(path);
-        if !on
-            || !m.capabilities.contains(&Capability::Registries)
-            || mods.iter().any(|c| c.id == m.id)
-        {
+        if !on {
+            report.push(format!("mod {} ({file}): installed, not enabled", m.id));
+            continue;
+        }
+        if !m.capabilities.contains(&Capability::Registries) {
+            report.push(format!(
+                "mod {} ({file}): enabled; no `registries` capability, so no content to layer",
+                m.id
+            ));
+            continue;
+        }
+        if mods.iter().any(|c| c.id == m.id) {
+            report.push(format!(
+                "mod {} ({file}): skipped, another file already provides this id",
+                m.id
+            ));
             continue;
         }
         let content = Content::read(path, m).and_then(|content| {
@@ -224,14 +263,39 @@ pub(super) fn content_root(
             }
         });
         match content {
-            Ok(content) => mods.push(ContentMod {
-                id: m.id.clone(),
-                content,
-            }),
-            Err(e) => log::warn!("Horizon: mod {} content not loaded: {e}", m.id),
+            Ok(content) => {
+                for w in &content.warnings {
+                    report.push(format!("mod {} ({file}): warning: {w}", m.id));
+                }
+                let biomes = content
+                    .files
+                    .iter()
+                    .filter(|f| {
+                        f.starts_with("data/")
+                            && f.contains("/worldgen/biome/")
+                            && !f.contains("/tags/")
+                    })
+                    .count();
+                report.push(format!(
+                    "mod {} {} ({file}): enabled - {} block(s), {} item declaration(s), {} biome definition(s)",
+                    m.id,
+                    m.version,
+                    content.blocks.len(),
+                    content.items.len(),
+                    biomes
+                ));
+                mods.push(ContentMod {
+                    id: m.id.clone(),
+                    content,
+                });
+            }
+            Err(e) => {
+                report.push(format!("mod {} ({file}): content NOT loaded: {e}", m.id));
+                log::warn!("Horizon: mod {} content not loaded: {e}", m.id);
+            }
         }
     }
-    match mod_content::resource_root(root, &mods, &here.join(".horizon-cache")) {
+    let out = match mod_content::resource_root(root, &mods, &here.join(".horizon-cache")) {
         Ok(out) => {
             if out != root {
                 log::info!(
@@ -239,15 +303,86 @@ pub(super) fn content_root(
                     mods.len(),
                     out.display()
                 );
+                for m in &mods {
+                    let creative = mod_content::creative_count(&out, &m.content.namespaces);
+                    let placed = mod_content::placed_biomes(&out, &m.content.namespaces);
+                    let placed = if placed.is_empty() {
+                        "none".to_owned()
+                    } else {
+                        placed
+                            .iter()
+                            .map(|(preset, n)| format!("{preset} {n}"))
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    };
+                    report.push(format!(
+                        "mod {}: in this root - {} creative item(s), placed biomes: {placed}",
+                        m.id, creative
+                    ));
+                }
+                for warning in mod_content::root_warnings(&out) {
+                    report.push(format!("warning: {warning}"));
+                }
+            } else if !mods.is_empty() {
+                report.push("content root is the plain base: nothing was layered".into());
             }
+            report.push(format!("content root: {}", out.display()));
             register_mob_effects(&mods);
             out
         }
         Err(e) => {
+            report.push(format!(
+                "content root FAILED - every content mod is OFF this run: {e}"
+            ));
             log::warn!("Horizon: content mods not loaded: {e}");
             register_mob_effects(&[]);
             root.to_owned()
         }
+    };
+    write_content_report(&here, &report);
+    out
+}
+
+/// Writes `content_root`'s report beside `options.txt` and logs it. A
+/// failure to write only logs: the report must never stop the game.
+fn write_content_report(dir: &std::path::Path, lines: &[String]) {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let seconds = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or_default();
+    let mut text = format!(
+        "Volt mod content report (game start, unix time {seconds})\n\
+         Send this file when a mod looks wrong in game.\n"
+    );
+    for line in lines {
+        log::info!("Horizon mods: {line}");
+        text.push_str(line);
+        text.push('\n');
+    }
+    if let Err(e) = std::fs::write(
+        dir.join(horizon_client::mod_content::REPORT_FILE),
+        text.as_bytes(),
+    ) {
+        log::warn!("Horizon: mod content report not written: {e}");
+    }
+}
+
+/// Appends one line to the mod content report when a world opens: which
+/// world, and the resource root its server generates from.
+pub(super) fn note_world_open(world: &str, resources: &std::path::Path) {
+    use std::io::Write;
+    let here = std::env::current_dir().unwrap_or_default();
+    let line = format!(
+        "world opened: {world}; resources root: {}\n",
+        resources.display()
+    );
+    log::info!("Horizon mods: {}", line.trim_end());
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .append(true)
+        .open(here.join(horizon_client::mod_content::REPORT_FILE))
+    {
+        let _ = f.write_all(line.as_bytes());
     }
 }
 
@@ -308,7 +443,21 @@ impl Game<'_> {
     pub(super) fn mod_screen_key(&mut self, _key: winit::keyboard::KeyCode) -> bool {
         false
     }
+    pub(super) fn mod_screen_waiting_for_key(&self) -> bool {
+        false
+    }
     pub(super) fn mod_screen_scroll(&mut self, _delta: f32) {}
+}
+
+#[cfg(feature = "mods")]
+fn wanted_mod_ids(settings: &mod_list::ModList) -> Vec<&str> {
+    settings
+        .installed
+        .iter()
+        .enumerate()
+        .filter(|&(i, m)| m.native.is_none() && settings.is_on(i))
+        .map(|(_, m)| m.id.as_str())
+        .collect()
 }
 
 #[cfg(feature = "mods")]
@@ -329,6 +478,8 @@ impl Game<'_> {
         // A native mod of the same id (one built into this game) takes over.
         let mut native = Vec::new();
         self.native_mods(&mut native);
+        self.bundled_zoom_list(&mut native);
+        self.bundled_hud_list(&mut native);
         let enabled = &self.settings.mods.enabled;
         let on = |id: &str| {
             (enabled.contains(id) || dev_ids.iter().any(|d| d == id))
@@ -437,15 +588,9 @@ impl Game<'_> {
             .filter(|e| e.status != Status::Off)
             .filter_map(|e| Some(e.manifest.as_ref()?.id.as_str()))
             .collect();
-        let wanted: Vec<&str> = self
-            .settings
-            .mods
-            .installed
-            .iter()
-            .enumerate()
-            .filter(|&(i, _)| self.settings.mods.is_on(i))
-            .map(|(_, m)| m.id.as_str())
-            .collect();
+        // `ModsState` contains only the sandboxed `.hmod` runtime. Native
+        // mods and Volt built-in switches are refreshed separately.
+        let wanted = wanted_mod_ids(&self.settings.mods);
         if running != wanted {
             self.start_mods();
         }
@@ -912,6 +1057,13 @@ impl Game<'_> {
         };
         self.bind_mod_key(value.unwrap_or("key.keyboard.unknown").to_owned());
         true
+    }
+    /// Whether the in-game mod screen is capturing a physical key.
+    pub(super) fn mod_screen_waiting_for_key(&self) -> bool {
+        self.mods
+            .screen
+            .as_ref()
+            .is_some_and(|screen| screen.binding.is_some())
     }
     /// The layout the mod screen's widgets get at `h`: (widget, top,
     /// height), the column being `COLUMN` wide down the middle.
@@ -1390,6 +1542,45 @@ mod tests {
     use super::*;
     use horizon_client::mod_list::Installed;
     use std::io::Write;
+
+    #[test]
+    fn android_mod_watcher_treats_first_file_creation_as_a_change() {
+        let created = Some(std::time::SystemTime::UNIX_EPOCH + Duration::from_secs(1));
+        let absent = None;
+        assert!(!mods_file_stamp_changed(&absent, &absent));
+        assert!(mods_file_stamp_changed(&absent, &created));
+        assert!(!mods_file_stamp_changed(&created, &created));
+        assert!(mods_file_stamp_changed(&created, &absent));
+    }
+
+    #[cfg(feature = "mods")]
+    #[test]
+    fn runtime_sync_keeps_only_enabled_wasm_rows_and_always_keeps_dev_mods() {
+        let installed = |id: &str, dev, native| Installed {
+            id: id.into(),
+            title: id.into(),
+            description: String::new(),
+            problem: None,
+            dev,
+            has_settings: false,
+            native,
+        };
+        let mut settings = mod_list::ModList {
+            enabled: ["sandboxed".to_owned(), "native".to_owned()]
+                .into_iter()
+                .collect(),
+            installed: vec![
+                installed("sandboxed", false, None),
+                installed("native", false, Some(mod_list::NativePage::default())),
+                installed("dev", true, None),
+                installed("disabled", false, None),
+            ],
+            ..Default::default()
+        };
+        assert_eq!(wanted_mod_ids(&settings), vec!["sandboxed", "dev"]);
+        settings.enabled.remove("sandboxed");
+        assert_eq!(wanted_mod_ids(&settings), vec!["dev"]);
+    }
 
     /// A minimal `.hnmod` the registry accepts: its manifest and its mixin's.
     fn hnmod(dir: &std::path::Path, id: &str) {

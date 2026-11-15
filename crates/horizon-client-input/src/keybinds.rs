@@ -73,13 +73,18 @@ pub const MAPPINGS: &[(&str, &str, &str)] = &[
     ("key.debug.networkCharts", "key.keyboard.3", "debug"),
     ("key.debug.lightmapTexture", "key.keyboard.4", "debug"),
     ("key.debug.improvedTransparency", "key.keyboard.x", "debug"),
+    // Native Volt actions are handled from physical inputs instead of through
+    // vanilla key translation, so rebinding them cannot remap player movement.
+    ("key.volt.freelook", "key.keyboard.left.alt", "volt_mods"),
+    ("key.volt.zoom", "key.keyboard.c", "volt_mods"),
+    ("key.volt.world_map", "key.keyboard.j", "volt_mods"),
 ];
 /// Mappings Options builds as `ToggleKeyMapping` (hold or toggle by option).
 pub fn is_toggle(name: &str) -> bool {
     matches!(name, "key.sneak" | "key.sprint" | "key.use" | "key.attack")
 }
 /// KeyMapping.Category sort order.
-pub const CATEGORIES: [&str; 8] = [
+pub const CATEGORIES: [&str; 9] = [
     "movement",
     "misc",
     "multiplayer",
@@ -88,6 +93,7 @@ pub const CATEGORIES: [&str; 8] = [
     "creative",
     "spectator",
     "debug",
+    "volt_mods",
 ];
 
 /// InputConstants key names <-> winit physical keys.
@@ -147,7 +153,10 @@ const KEYS: &[(&str, KeyCode)] = &[
     ("key.keyboard.caps.lock", KeyCode::CapsLock),
     ("key.keyboard.world.1", KeyCode::IntlBackslash),
     ("key.keyboard.international1", KeyCode::IntlRo),
+    ("key.keyboard.international2", KeyCode::KanaMode),
     ("key.keyboard.international3", KeyCode::IntlYen),
+    ("key.keyboard.international4", KeyCode::Convert),
+    ("key.keyboard.international5", KeyCode::NonConvert),
     ("key.keyboard.lang1", KeyCode::Lang1),
     ("key.keyboard.lang2", KeyCode::Lang2),
     ("key.keyboard.lang3", KeyCode::Lang3),
@@ -247,6 +256,52 @@ const KEYS: &[(&str, KeyCode)] = &[
     ("key.keyboard.keypad.clear", KeyCode::NumpadClear),
     ("key.keyboard.keypad.clear.entry", KeyCode::NumpadClearEntry),
     ("key.keyboard.menu", KeyCode::ContextMenu),
+    ("key.keyboard.ac.back", KeyCode::BrowserBack),
+    ("key.keyboard.ac.bookmarks", KeyCode::BrowserFavorites),
+    ("key.keyboard.ac.forward", KeyCode::BrowserForward),
+    ("key.keyboard.ac.home", KeyCode::BrowserHome),
+    ("key.keyboard.ac.refresh", KeyCode::BrowserRefresh),
+    ("key.keyboard.ac.search", KeyCode::BrowserSearch),
+    ("key.keyboard.ac.stop", KeyCode::BrowserStop),
+    ("key.keyboard.media.eject", KeyCode::Eject),
+    ("key.keyboard.media.play.pause", KeyCode::MediaPlayPause),
+    ("key.keyboard.media.select", KeyCode::MediaSelect),
+    ("key.keyboard.media.stop", KeyCode::MediaStop),
+    ("key.keyboard.media.next.track", KeyCode::MediaTrackNext),
+    ("key.keyboard.media.previous.track", KeyCode::MediaTrackPrevious),
+    ("key.keyboard.power", KeyCode::Power),
+    ("key.keyboard.sleep", KeyCode::Sleep),
+    ("key.keyboard.volume.down", KeyCode::AudioVolumeDown),
+    ("key.keyboard.mute", KeyCode::AudioVolumeMute),
+    ("key.keyboard.volume.up", KeyCode::AudioVolumeUp),
+    ("key.keyboard.wake", KeyCode::WakeUp),
+    ("key.keyboard.abort", KeyCode::Abort),
+    ("key.keyboard.f25", KeyCode::F25),
+    ("key.keyboard.f26", KeyCode::F26),
+    ("key.keyboard.f27", KeyCode::F27),
+    ("key.keyboard.f28", KeyCode::F28),
+    ("key.keyboard.f29", KeyCode::F29),
+    ("key.keyboard.f30", KeyCode::F30),
+    ("key.keyboard.f31", KeyCode::F31),
+    ("key.keyboard.f32", KeyCode::F32),
+    ("key.keyboard.f33", KeyCode::F33),
+    ("key.keyboard.f34", KeyCode::F34),
+    ("key.keyboard.f35", KeyCode::F35),
+    ("key.keyboard.fn", KeyCode::Fn),
+    ("key.keyboard.fn.lock", KeyCode::FnLock),
+    ("key.keyboard.hiragana", KeyCode::Hiragana),
+    ("key.keyboard.hyper", KeyCode::Hyper),
+    ("key.keyboard.katakana", KeyCode::Katakana),
+    ("key.keyboard.launch.app.1", KeyCode::LaunchApp1),
+    ("key.keyboard.launch.app.2", KeyCode::LaunchApp2),
+    ("key.keyboard.launch.mail", KeyCode::LaunchMail),
+    ("key.keyboard.meta", KeyCode::Meta),
+    ("key.keyboard.keypad.star", KeyCode::NumpadStar),
+    ("key.keyboard.open", KeyCode::Open),
+    ("key.keyboard.props", KeyCode::Props),
+    ("key.keyboard.resume", KeyCode::Resume),
+    ("key.keyboard.suspend", KeyCode::Suspend),
+    ("key.keyboard.turbo", KeyCode::Turbo),
     ("key.keyboard.left.control", KeyCode::ControlLeft),
     ("key.keyboard.left.shift", KeyCode::ShiftLeft),
     ("key.keyboard.left.alt", KeyCode::AltLeft),
@@ -404,7 +459,7 @@ impl KeyBinds {
     fn translated_mappings<'a>(&'a self, key: &'a str) -> impl Iterator<Item = &'static str> + 'a {
         MAPPINGS
             .iter()
-            .filter(|m| m.2 != "debug")
+            .filter(|m| m.2 != "debug" && m.2 != "volt_mods")
             .map(|m| m.0)
             .filter(move |n| self.get(n) == key)
     }
@@ -413,7 +468,7 @@ impl KeyBinds {
     fn default_moved(&self, key: &str) -> bool {
         MAPPINGS
             .iter()
-            .any(|(n, d, c)| *d == key && *c != "debug" && !self.is_default(n))
+            .any(|(n, d, c)| *d == key && *c != "debug" && *c != "volt_mods" && !self.is_default(n))
     }
     /// Translate a physical key into the default key of the mapping it is
     /// bound to, so game code written against vanilla defaults follows the
@@ -497,6 +552,37 @@ impl KeyBinds {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn available_keys_round_trip_through_input_names() {
+        // Keep the picker and capture path in sync with vendored Winit's
+        // complete 194-variant KeyCode enum.
+        assert_eq!(available_keys().len(), 194);
+        let mut codes = Vec::new();
+        for &(name, code) in available_keys() {
+            assert_eq!(key_code(name), Some(code), "key token {name}");
+            assert_eq!(key_name(code), Some(name), "physical key {code:?}");
+            assert!(!codes.contains(&code), "duplicate physical key {code:?}");
+            codes.push(code);
+        }
+    }
+
+    #[test]
+    fn mod_bindings_persist_without_translating_vanilla_input() {
+        let mut bindings = KeyBinds::default();
+        bindings.set("key.volt.zoom", "key.keyboard.w");
+        bindings.set("key.volt.freelook", "key.mouse.4");
+        assert_eq!(bindings.get("key.volt.freelook"), "key.mouse.4");
+        assert_eq!(bindings.translate_all(KeyCode::KeyW), vec![Ok(KeyCode::KeyW)]);
+        // Moving zoom away from C must not steal unrelated C input.
+        assert_eq!(bindings.translate_all(KeyCode::KeyC), vec![Ok(KeyCode::KeyC)]);
+        assert!(bindings.conflicts("key.volt.zoom").contains(&"key.forward"));
+        let saved = bindings.saved();
+        let mut restored = KeyBinds::default();
+        for (name, key) in saved { restored.set(name, &key); }
+        assert_eq!(restored, bindings);
+    }
+
     #[test]
     fn container_mouse_hotkeys_follow_slot_bindings_and_pick_item_priority() {
         for button in [MouseButton::Back, MouseButton::Forward, MouseButton::Middle] {

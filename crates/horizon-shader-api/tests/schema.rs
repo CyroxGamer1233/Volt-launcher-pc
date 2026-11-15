@@ -91,6 +91,18 @@ fn reads_every_key_of_schema_1() {
 }
 
 #[test]
+fn third_party_lights_metadata_does_not_block_supported_shader_stages() {
+    let mut text = sample_text();
+    text.push_str(
+        "\n[[lights]]\nid = \"sample_light\"\nname = \"Sample light metadata\"\nfile = \"lights.wgsl\"\n",
+    );
+
+    let manifest = Manifest::parse(&text).unwrap();
+    assert_eq!(manifest.name, "Sample Pack");
+    assert!(!manifest.files().contains(&"lights.wgsl"));
+}
+
+#[test]
 fn the_smallest_manifest() {
     let m = Manifest::parse(
         "schema = 1\nid = \"p\"\nname = \"P\"\nversion = \"1\"\napi = \"0.1\"\n[[post]]\nfile = \"a.wgsl\"\n",

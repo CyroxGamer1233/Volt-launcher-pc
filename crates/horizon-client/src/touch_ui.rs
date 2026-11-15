@@ -17,8 +17,9 @@ pub struct TouchUi {
     relative: Option<RelativeTouch>,
     relative_click: Option<bool>,
     pub keyboard: Option<Keyboard>,
-    gesture: Option<(u64, [f32; 2], [f32; 2], bool)>,
-    pointer_drag: Option<u64>,
+    gesture: Option<(u64, [f32; 2], [f32; 2], bool, bool)>,
+    /// The id of a finger dragging a slider, and whether it may synthesize mouse clicks.
+    pointer_drag: Option<(u64, bool)>,
     held_keys: BTreeMap<u64, KeyCode>,
     pub f3_latched: bool,
 }
@@ -232,8 +233,20 @@ impl TouchUi {
         }
         None
     }
-    /// Sliders retain mouse dragging; list rows use scroll-or-tap gestures.
+    /// Existing callers that use the pointer only to detect a slider drag.
     pub fn direct_pointer(&mut self, id: u64, p: [f32; 2], phase: TouchPhase) -> bool {
+        self.direct_pointer_with_mouse(id, p, phase, true).is_some()
+    }
+    /// Sliders retain mouse dragging; list rows use scroll-or-tap gestures.
+    /// A touch that began while binding a key still owns the slider gesture,
+    /// but must not turn into an LMB press or release.
+    pub fn direct_pointer_with_mouse(
+        &mut self,
+        id: u64,
+        p: [f32; 2],
+        phase: TouchPhase,
+        allow_mouse_click: bool,
+    ) -> Option<bool> {
         if phase == TouchPhase::Started
             && crate::widgets::last_targets().iter().any(|t| {
                 let [x, y, w, h] = t.rect;
@@ -242,29 +255,44 @@ impl TouchUi {
                     && (y..y + h).contains(&p[1])
             })
         {
-            self.pointer_drag = Some(id);
+            self.pointer_drag = Some((id, allow_mouse_click));
         }
-        if self.pointer_drag == Some(id) {
-            if matches!(phase, TouchPhase::Ended | TouchPhase::Cancelled) {
-                self.pointer_drag = None;
-            }
-            return true;
+        let Some((owner, allow_mouse_click)) = self.pointer_drag else {
+            return None;
+        };
+        if owner != id {
+            return None;
         }
-        false
+        if matches!(phase, TouchPhase::Ended | TouchPhase::Cancelled) {
+            self.pointer_drag = None;
+        }
+        Some(allow_mouse_click)
     }
     /// A drag scrolls; a tap clicks only on release. Never activate a row while scrolling it.
     pub fn gesture(&mut self, id: u64, p: [f32; 2], phase: TouchPhase) -> Gesture {
+        self.gesture_with_tap(id, p, phase, true)
+    }
+    /// `allow_tap` is captured at touch-down. During key capture, ordinary
+    /// screen taps must not be mistaken for a left-mouse binding; dedicated
+    /// touch-key and virtual-mouse buttons still use their explicit paths.
+    pub fn gesture_with_tap(
+        &mut self,
+        id: u64,
+        p: [f32; 2],
+        phase: TouchPhase,
+        allow_tap: bool,
+    ) -> Gesture {
         if phase == TouchPhase::Cancelled {
             self.cancel();
             return Gesture::None;
         }
         if phase == TouchPhase::Started {
             if self.gesture.is_none() {
-                self.gesture = Some((id, p, p, false));
+                self.gesture = Some((id, p, p, false, allow_tap));
             }
             return Gesture::None;
         }
-        let Some((owner, start, previous, dragged)) = &mut self.gesture else {
+        let Some((owner, start, previous, dragged, tap_allowed)) = &mut self.gesture else {
             return Gesture::None;
         };
         if *owner != id {
@@ -274,7 +302,7 @@ impl TouchUi {
         let dy = p[1] - previous[1];
         *previous = p;
         if phase == TouchPhase::Ended {
-            let tap = !*dragged;
+            let tap = !*dragged && *tap_allowed;
             self.cancel();
             return if tap { Gesture::Tap } else { Gesture::None };
         }
@@ -611,5 +639,33 @@ mod tests {
             u.gesture(1, [20.0, 20.0], TouchPhase::Ended),
             Gesture::None
         ));
+    }
+    #[test]
+    fn touch_taps_do_not_bind_the_left_mouse_button_while_waiting_for_a_key() {
+        let mut u = TouchUi::default();
+        u.gesture_with_tap(1, [20.0, 20.0], TouchPhase::Started, false);
+        assert!(matches!(
+            u.gesture_with_tap(1, [21.0, 21.0], TouchPhase::Ended, true),
+            Gesture::None
+        ));
+        u.gesture_with_tap(2, [20.0, 20.0], TouchPhase::Started, true);
+        assert!(matches!(
+            u.gesture_with_tap(2, [21.0, 21.0], TouchPhase::Ended, true),
+            Gesture::Tap
+        ));
+    }
+    #[test]
+    fn slider_touch_does_not_synthesize_mouse_edges_during_key_capture() {
+        let mut u = TouchUi::default();
+        u.pointer_drag = Some((1, false));
+        assert_eq!(
+            u.direct_pointer_with_mouse(1, [20.0, 20.0], TouchPhase::Moved, false),
+            Some(false)
+        );
+        assert_eq!(
+            u.direct_pointer_with_mouse(1, [20.0, 20.0], TouchPhase::Ended, false),
+            Some(false)
+        );
+        assert!(u.pointer_drag.is_none());
     }
 }
