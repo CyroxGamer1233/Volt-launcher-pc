@@ -240,3 +240,17 @@ Rolling `debug` release assets are likewise unlabelled by commit in the filename
 the release body names the commit and its `SHA256SUMS.txt` pins the bytes.
 Session branches publish nothing, so that release only advances when `android`
 or a `v*` tag does.
+
+### APK download reality (checked 2026-11-15)
+- Artifacts are **auth-walled**: an anonymous request to a public repo's artifact
+  URL bounces through `github.com/<repo>/suites/<id>/artifacts/<id>` and lands on
+  a 404 sign-in wall. There is **no** public direct-download URL for an artifact.
+  The zip is a `.zip` containing `Volt-Launcher-<version>-<abi>.apk`.
+- The agent's token can `push` and read, but **`workflow_dispatch` is 403**
+  ("Resource not accessible by integration"), so it cannot trigger the
+  `publish_release: true` path that would refresh the rolling `debug` release and
+  mint a sign-in-free link. Only a human can run the dispatch:
+  Actions → Android APK → Run workflow → branch `arena/8fa03d72-volt-launcher`,
+  ABIs `all`, profile `release`, `publish_release` checked.
+- `publish_release` is true for `refs/heads/android`, `v*` tags, or that explicit
+  dispatch, so session-branch runs only ever produce artifacts.
