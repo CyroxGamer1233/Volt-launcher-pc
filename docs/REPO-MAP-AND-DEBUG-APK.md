@@ -224,3 +224,19 @@ PR #5's own check suite (`43720770524`) finished all-green: source, engine
 tables, worldgen tests, runtime proof, native weave on all four ABIs, every APK
 build; `Publish GitHub Release` = skipped (no pre-release, nothing published from
 a session branch). The `docs/`+memory commits after it only touch this file.
+
+### How to get the APK for a specific commit
+Artifact downloads are blocked inside the agent sandbox (the blob storage host is
+not reachable), but the run page itself is public:
+
+`https://github.com/entitybrian69-bit/Volt-launcher/actions/runs/<run-id>` →
+**Artifacts** → `Volt-Launcher-<version>-<abi>`, which unzips to
+`Volt-Launcher-<version>-<abi>.apk`.
+
+Beware: artifact names (`Volt-Launcher-1.0.0-<abi>`) carry **no commit**, so an
+open **Actions** page can show a rebuilt, newer listing. Navigate from the run id.
+
+Rolling `debug` release assets are likewise unlabelled by commit in the filename;
+the release body names the commit and its `SHA256SUMS.txt` pins the bytes.
+Session branches publish nothing, so that release only advances when `android`
+or a `v*` tag does.
