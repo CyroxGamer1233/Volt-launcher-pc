@@ -136,3 +136,65 @@ with `python tools/android_build.py --abi arm64-v8a --public` (needs SDK 35, NDK
   anything distributed; `--release-candidate`/`--public` audits are privacy checks, not
   redistribution permission; keep signing keys in `.local/android/`; upstream deployment
   workflows stay inactive on this fork.
+
+---
+
+## Session changes (2026-11-15, `arena/8fa03d72-volt-launcher`)
+
+Player-facing fixes requested in the review of the dashboard screenshot.
+
+### Release channel — never a pre-release
+`.github/workflows/android-apk.yml`: `publish_release` is now true only for
+`android` itself, a `v*` tag, or an explicit `workflow_dispatch` with
+`publish_release`. Session branches (`arena/**`) build APKs as run artifacts but
+no longer roll the `debug` release. The release job already creates/edits rolling
+debug builds with `--latest=false` and never marks them pre-release (only
+`docs/RELEASE-NOTES-v*.md` tags ship notes); this keeps agent branches out of the
+download page entirely.
+
+### Dashboard layout (`crates/horizon-client/src/android/launcher_pages.rs`)
+- **Play** sits on the bottom edge and is centred in the column between the two
+  rails (was offset 22 dp up and off-centre because the right column is wider).
+  Pinned by `play_pill_is_centred_between_the_rails`.
+- **Discord** moved out of the crowded top-right corner into its own glass row
+  under the account chip (`draw_discord_row`), clear of the destination rail.
+- **Account/profile chip** moved to its own bottom-left column and never slides
+  under a rail (`indicator_right_room`).
+- **Right rail is now real navigation**: icon-only Worlds / Servers / Shots /
+  Replays / Boost (`draw_right_rail`), visible on the dashboard *and* on every
+  secondary tab and on the Packs/Shaders/Browse catalog pages (`with_right_rail`).
+  Tab bodies reserve its width (`liquid_home_tab_area`), so nothing hides under it.
+- **Volt Boost is a tab** (`HomeTab::VoltBoost`) drawn by the same panel as the
+  dialog (`draw_volt_boost_panel`), so the launcher stays reachable.
+- **Tab bodies show real pictures**: the world's `icon.png` or its newest world
+  screenshot (`world_picture`), server icons, screenshot thumbs and replay
+  thumbnails; tapping a picture (not just the caption) opens fullscreen, and
+  every tab keeps a visible `< Home` button plus the destination rail.
+- **Left rail no longer cramped** (non-Liquid shell): item height is derived from
+  the available height, entries shrink to icons before any gets clipped.
+- **Shader / pack / mod detail pages** (`draw_catalog_page`): About / Screenshots /
+  Download with `← Back`, a `Home` button, and `← List` in the footer, so a detail
+  page is never a dead end.
+
+### Shader download failures were silent (`crates/horizon-client/src/android/catalog.rs`)
+Failures lived only in `status`, so a failed Horizon shader left its Download tab
+looking inert. Now every install path records a per-project reason
+(`failed_message` + `failure_for`), including early returns that used to do
+nothing (busy worker, unsupported kind), and the detail page + grid cards print
+it. The Download tab shows a live percentage and a "still working" note after 20 s
+(`job_is_stalled`). Worker spawn failures also surface.
+
+### "Captcha failed" on public server joins (ported from the unmerged PR #4)
+Three non-vanilla behaviours in the join fingerprint; all three also existed on
+`android`:
+1. `net.rs` — the client volunteered a `horizon:mod_net` hello to every server
+   during configuration. Vanilla sends exactly `ClientInformation` and
+   `minecraft:brand`; the hello is now strictly an answer to the host's own
+   announcement (LAN hosts announce first, `lan/conn.rs`), and the client stays
+   silent otherwise. Regression test
+   `horizon_hello_only_answers_the_servers_mod_net_announcement`.
+2. `game/remote.rs` — `volt:skin` only goes to hosts that announced themselves
+   as Horizon.
+3. `game/remote.rs` — the SkinsRestorer `/skin` command no longer fires the
+   instant the command tree arrives (auth plugins punish that as bot behaviour);
+   it waits 3 s and the player's own movement input (`pending_skin_cmd`).

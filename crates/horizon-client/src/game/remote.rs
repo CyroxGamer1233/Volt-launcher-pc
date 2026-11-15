@@ -534,6 +534,13 @@ pub(super) struct Remote {
     pub(super) offline_skin_gen: u64,
     pub(super) offline_cape_gen: u64,
     pub(super) skin_synced: bool,
+    /// A SkinsRestorer-style `/skin` sync waiting for the player to act.
+    /// Cracked servers gate every command behind their auth plugins
+    /// (`/login`, a captcha): a command fired the instant the command tree
+    /// arrives is punished as bot behaviour and the join fails with the
+    /// plugin's captcha error. It goes out once the player presses movement
+    /// input - by then they are verified and playing.
+    pub(super) pending_skin_cmd: Option<(String, std::time::Instant)>,
     pub(super) volt_peer_skins: HashMap<u128, (Option<bool>, bool)>,
 }
 
@@ -946,6 +953,7 @@ impl Game<'_> {
             offline_skin_gen: 0,
             offline_cape_gen: 0,
             skin_synced: false,
+            pending_skin_cmd: None,
             volt_peer_skins: HashMap::new(),
             transfer: None,
         });
@@ -2831,7 +2839,16 @@ impl Game<'_> {
                 if let Some(r) = self.remote.as_mut() {
                     r.skin_synced = false;
                 }
-                if let Some(local_uuid) = self.remote.as_ref().map(|r| r.profile)
+                // The volt:skin payload goes only to hosts that announced
+                // themselves as Horizon (mod_net). Public servers would ignore
+                // it at best - and their anti-bot plugins fingerprint an
+                // unknown payload right after login as a bot and fail the join
+                // with their captcha flows at worst.
+                if let Some(local_uuid) = self
+                    .remote
+                    .as_ref()
+                    .filter(|r| r.mod_net)
+                    .map(|r| r.profile)
                     && let Some(data) = horizon_client::skins::build_volt_skin_packet(local_uuid)
                 {
                     self.send(S::CustomPayload(
@@ -4095,11 +4112,13 @@ impl Game<'_> {
                         });
                     if has_skin_cmd
                         && let Some(cmd) = horizon_client::skins::current_server_sync_cmd()
+                        && let Some(r) = self.remote.as_mut()
                     {
-                        if let Some(r) = self.remote.as_mut() {
-                            r.skin_synced = true;
-                        }
-                        self.send(S::ChatCommand(play::ChatCommand { command: cmd }));
+                        // Not sent yet: auth plugins on cracked servers kick
+                        // joins whose first command isn't theirs (a captcha or
+                        // /login). It waits for the player's own movement.
+                        r.skin_synced = true;
+                        r.pending_skin_cmd = Some((cmd, std::time::Instant::now()));
                     }
                 }
             }
@@ -6460,6 +6479,19 @@ impl Game<'_> {
             return;
         };
         let mut out = Vec::new();
+        // The deferred SkinsRestorer sync: the player pressing movement or
+        // jump input means their auth plugin released them (AuthMe freezes
+        // players until /login or the captcha passes), so an ordinary player
+        // command is in order now. A short floor keeps it clear of anti-bot
+        // plugins that score commands in the first seconds of a join.
+        let skin_ready = input != 0
+            && matches!(
+                &r.pending_skin_cmd,
+                Some((_, queued)) if queued.elapsed() >= std::time::Duration::from_secs(3)
+            );
+        if skin_ready && let Some((cmd, _)) = r.pending_skin_cmd.take() {
+            out.push(S::ChatCommand(play::ChatCommand { command: cmd }));
+        }
         if r.carried != Some(selected) {
             r.carried = Some(selected);
             out.push(S::SetCarriedItem(play::SetCarriedItem {

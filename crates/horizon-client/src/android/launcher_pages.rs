@@ -92,7 +92,7 @@ pub(crate) mod theme {
 }
 
 #[derive(Clone, Copy, PartialEq)]
-pub(crate) enum HomeTab { Overview, Worlds, Multiplayer, Screenshots, Replays, Console }
+pub(crate) enum HomeTab { Overview, Worlds, Multiplayer, Screenshots, Replays, VoltBoost, Console }
 
 #[derive(Clone, Copy, PartialEq)]
 pub(crate) enum Action {
@@ -404,12 +404,85 @@ const LIQUID_RAIL_CONTENT_GAP: f32 = 16.0;
 fn liquid_home_tab_area(area: [f32; 4], surface_right: f32) -> [f32; 4] {
     let [x, y, _, h] = area;
     let left = x + LIQUID_LEFT_RAIL_INSET + LIQUID_LEFT_RAIL_WIDTH + LIQUID_RAIL_CONTENT_GAP;
-    let right = x + surface_right - LIQUID_RIGHT_RAIL_INSET;
+    let right = x + surface_right
+        - LIQUID_RIGHT_RAIL_INSET
+        - LIQUID_RIGHT_RAIL_WIDTH
+        - LIQUID_RAIL_CONTENT_GAP;
     [left, y, (right - left).max(0.0), h]
+}
+
+/// Width available for the dashboard's top-right column (account chip and the
+/// Discord row under it) before the destination rail begins.
+fn indicator_right_room(surface_right: f32) -> f32 {
+    surface_right - LIQUID_RIGHT_RAIL_INSET - LIQUID_RIGHT_RAIL_WIDTH - 24.0
 }
 
 fn liquid_right_rail_x(area: [f32; 4], surface_right: f32) -> f32 {
     area[0] + surface_right - LIQUID_RIGHT_RAIL_INSET - LIQUID_RIGHT_RAIL_WIDTH
+}
+
+/// The destination rail: Worlds, Servers, Shots, Replays and Boost, icon-only
+/// so every entry fits a landscape phone and Boost is never cut off.
+fn draw_right_rail(
+    ui: &mut Ui,
+    area: [f32; 4],
+    surface_right: f32,
+    home_tab: HomeTab,
+    page: Page,
+    targets: &mut Vec<([f32; 4], Action)>,
+) {
+    let [_, ay, _, h] = area;
+    let rail_x = liquid_right_rail_x(area, surface_right);
+    let rail_y = ay + 12.0;
+    let rail_h = (h - 24.0).max(0.0);
+    ui.rounded(rail_x, rail_y, LIQUID_RIGHT_RAIL_WIDTH, rail_h, 18.0, theme::GLASS());
+    ui.border(rail_x, rail_y, LIQUID_RIGHT_RAIL_WIDTH, rail_h, 18.0, theme::GLASS_BORDER());
+    let right_nav: [(&str, u8, HomeTab); 5] = [
+        ("Worlds", 0, HomeTab::Worlds),
+        ("Servers", 1, HomeTab::Multiplayer),
+        ("Shots", 2, HomeTab::Screenshots),
+        ("Replays", 7, HomeTab::Replays),
+        ("Boost", 4, HomeTab::VoltBoost),
+    ];
+    let (item_h, gap) = if rail_h < 380.0 {
+        (40.0, 4.0)
+    } else if rail_h < 520.0 {
+        (50.0, 6.0)
+    } else {
+        (62.0, 8.0)
+    };
+    let total = item_h * right_nav.len() as f32 + gap * (right_nav.len() as f32 - 1.0);
+    let start_y = rail_y + (rail_h - total).max(0.0) * 0.5;
+    for (i, (label, glyph, tab)) in right_nav.iter().enumerate() {
+        let y = start_y + i as f32 * (item_h + gap);
+        let rect = [rail_x + 6.0, y, LIQUID_RIGHT_RAIL_WIDTH - 12.0, item_h];
+        let active = home_tab == *tab && page == Page::Play;
+        if active {
+            ui.rounded(rect[0], rect[1], rect[2], rect[3], 12.0, theme::HOVER());
+            ui.border(rect[0], rect[1], rect[2], rect[3], 12.0, theme::BORDER());
+            let inset = (item_h * 0.22).max(7.0);
+            ui.rounded(rect[0] - 1.0, rect[1] + inset, 2.2, rect[3] - inset * 2.0, 1.0, theme::TEXT());
+        }
+        let (icon_y, label_y, font) = if item_h < 48.0 {
+            (13.0, 22.0, 8.5)
+        } else if item_h < 56.0 {
+            (16.0, 26.0, 9.0)
+        } else {
+            (18.0, 31.0, 9.5)
+        };
+        let col = if active { theme::TEXT() } else { theme::MUTED() };
+        draw_tile_icon(ui, *glyph, rect[0] + rect[2] * 0.5, rect[1] + icon_y, col);
+        let fitted = ui.fit_text(Face::LauncherMedium, font, label, (rect[2] - 2.0).max(20.0));
+        draw_centered_text(
+            ui,
+            Face::LauncherMedium,
+            font,
+            [rect[0] + 1.0, rect[1] + label_y, rect[2] - 2.0, (item_h - label_y + 1.0).max(16.0)],
+            if active { theme::TEXT() } else { theme::DIM() },
+            &fitted,
+        );
+        targets.push((rect, Action::HomeTab(*tab)));
+    }
 }
 
 #[cfg(test)]
@@ -417,15 +490,29 @@ mod liquid_home_layout_tests {
     use super::*;
 
     #[test]
-    fn secondary_home_content_clears_the_left_rail_and_visible_right_edge() {
+    fn secondary_home_content_clears_both_rails_and_the_visible_right_edge() {
         let area = liquid_home_tab_area([0.0, 0.0, 800.0, 600.0], 800.0);
-        assert_eq!(area, [102.0, 0.0, 690.0, 600.0]);
+        assert_eq!(area, [102.0, 0.0, 584.0, 600.0]);
+        // Nothing of the tab body may sit under the destination rail.
+        assert!(area[0] + area[2] <= liquid_right_rail_x([0.0, 0.0, 800.0, 600.0], 800.0));
     }
 
     #[test]
     fn secondary_home_content_uses_the_visible_surface_origin() {
         let area = liquid_home_tab_area([24.0, 12.0, 700.0, 500.0], 700.0);
-        assert_eq!(area, [126.0, 12.0, 590.0, 500.0]);
+        assert_eq!(area, [126.0, 12.0, 484.0, 500.0]);
+    }
+
+    /// The dashboard Play pill is centred in the column between the two rails,
+    /// which is where players read "middle bottom" on a landscape phone.
+    #[test]
+    fn play_pill_is_centred_between_the_rails() {
+        let (w, rail_w, right_rail_w, play_w) = (800.0, 78.0, 88.0, 320.0);
+        let content_w = (w - rail_w - right_rail_w - 32.0).max(play_w + 20.0);
+        let px0 = rail_w + 16.0 + (content_w - play_w) * 0.5;
+        let centre = px0 + play_w * 0.5;
+        let rails_centre = (rail_w + 16.0 + (w - right_rail_w)) * 0.5;
+        assert!((centre - rails_centre).abs() <= 1.0, "{centre} vs {rails_centre}");
     }
 
     #[test]
@@ -671,6 +758,31 @@ fn local_worlds(game_home: &std::path::Path) -> Vec<(String, std::path::PathBuf)
         .collect();
     worlds.sort_by(|a, b| a.0.cmp(&b.0));
     worlds
+}
+
+/// The picture a world card shows when the save has no `icon.png`: the newest
+/// screenshot stored in the world folder, as desktop players expect.
+fn world_picture(world: &std::path::Path) -> Option<std::path::PathBuf> {
+    let mut best: Option<(std::time::SystemTime, std::path::PathBuf)> = None;
+    for folder in [world.to_path_buf(), world.join("screenshots")] {
+        for entry in std::fs::read_dir(folder).into_iter().flatten().flatten() {
+            let path = entry.path();
+            if !path.extension().is_some_and(|ext| ext.eq_ignore_ascii_case("png")) {
+                continue;
+            }
+            let Ok(meta) = std::fs::symlink_metadata(&path) else {
+                continue;
+            };
+            if !meta.is_file() || meta.file_type().is_symlink() {
+                continue;
+            }
+            let stamp = meta.modified().unwrap_or(std::time::UNIX_EPOCH);
+            if best.as_ref().is_none_or(|(seen, _)| stamp > *seen) {
+                best = Some((stamp, path));
+            }
+        }
+    }
+    best.map(|(_, path)| path)
 }
 
 fn preview_slot(index: usize) -> usize {
@@ -1313,13 +1425,27 @@ impl DrawCtx<'_> {
             ("Controls", Page::Controls, Action::Page(Page::Controls)),
             ("Settings", Page::Settings, Action::Page(Page::Settings)),
         ];
-        // Adaptive spacing to avoid cramped look on short screens (user feedback)
-        let (item_h, gap) = if bar_h < 560.0 { (48.0, 4.0) } else if bar_h < 700.0 { (54.0, 5.0) } else { (62.0, 6.0) };
-        let total = items.len() as f32 * item_h + (items.len() as f32 - 1.0) * gap;
-        let start_y = bar_y + (bar_h - total) * 0.5;
+        // Seven labelled destinations share the rail's height, so the item
+        // height is derived from the space that is actually there instead of a
+        // fixed table that overflowed on short landscape screens and hid the
+        // last entries (the reported cramped bottom-left column).
+        let count = items.len() as f32;
+        let mut gap = if bar_h < 560.0 { 3.0 } else { 5.0 };
+        let mut item_h = ((bar_h - 8.0) - gap * (count - 1.0)) / count;
+        if item_h > 62.0 {
+            item_h = 62.0;
+            gap = 6.0;
+        } else if item_h > 54.0 {
+            item_h = 54.0;
+            gap = 5.0;
+        }
+        let item_h = item_h.max(34.0);
+        let total = item_h * count + gap * (count - 1.0);
+        let start_y = bar_y + (bar_h - total).max(0.0) * 0.5;
+        let labelled = item_h >= 42.0;
         for (i, (label, icon, action)) in items.iter().enumerate() {
             let y = start_y + i as f32 * (item_h + gap);
-            let rect = [bar_x + 6.0, y, bar_w - 12.0, item_h];
+            let rect = [bar_x + 5.0, y, bar_w - 10.0, item_h];
             let active = match i {
                 0 => self.catalog.page == Page::Play,
                 1 => false,
@@ -1337,11 +1463,18 @@ impl DrawCtx<'_> {
                 ui.rounded(rect[0] - 1.0, rect[1] + 12.0, 2.5, rect[3] - 24.0, 1.2, theme::TEXT());
             }
             let col = if active { theme::TEXT() } else { theme::MUTED() };
-            // Icon centered top, label below – vertical stack
-            draw_page_icon(ui, *icon, rect[0] + rect[2] * 0.5, rect[1] + 18.0, col);
-            draw_centered_text(ui, Face::LauncherMedium, 10.0,
-                [rect[0], rect[1] + 30.0, rect[2], 18.0],
-                if active { theme::TEXT() } else { theme::DIM() }, label);
+            if labelled {
+                // Icon centered top, label below – vertical stack
+                let icon_y = rect[1] + (item_h * 0.30).min(18.0);
+                draw_page_icon(ui, *icon, rect[0] + rect[2] * 0.5, icon_y, col);
+                let font = if item_h < 48.0 { 8.5 } else { 10.0 };
+                let fitted = ui.fit_text(Face::LauncherMedium, font, label, rect[2] - 2.0);
+                draw_centered_text(ui, Face::LauncherMedium, font,
+                    [rect[0], icon_y + 10.0, rect[2], (rect[1] + rect[3] - icon_y - 10.0).max(12.0)],
+                    if active { theme::TEXT() } else { theme::DIM() }, &fitted);
+            } else {
+                draw_page_icon(ui, *icon, rect[0] + rect[2] * 0.5, rect[1] + rect[3] * 0.5, col);
+            }
             self.targets.push((rect, *action));
         }
     }
@@ -1606,63 +1739,46 @@ impl DrawCtx<'_> {
         }
     }
 
-    /// Home-overview destinations sit inside a consistent inset from the
-    /// visible surface's right edge.
+    /// The destination rail (Worlds / Servers / Shots / Replays / Boost),
+    /// icon-only like the left navigation and visible on Home and on every
+    /// secondary tab alike.
     fn draw_liquid_right_rail(&mut self, ui: &mut Ui, area: [f32; 4]) {
-        let [_, ay, _, h] = area;
-        let rail_x = liquid_right_rail_x(area, self.surface_right);
-        let rail_y = ay + 12.0;
-        let rail_h = (h - 24.0).max(0.0);
-        ui.rounded(rail_x, rail_y, LIQUID_RIGHT_RAIL_WIDTH, rail_h, 18.0, theme::GLASS());
-        ui.border(rail_x, rail_y, LIQUID_RIGHT_RAIL_WIDTH, rail_h, 18.0, theme::GLASS_BORDER());
-        let right_nav: [(&str, u8, Option<HomeTab>, Action); 5] = [
-            ("Worlds", 0, Some(HomeTab::Worlds), Action::HomeTab(HomeTab::Worlds)),
-            ("Servers", 1, Some(HomeTab::Multiplayer), Action::HomeTab(HomeTab::Multiplayer)),
-            ("Shots", 2, Some(HomeTab::Screenshots), Action::HomeTab(HomeTab::Screenshots)),
-            ("Replays", 7, Some(HomeTab::Replays), Action::HomeTab(HomeTab::Replays)),
-            ("Volt Boost", 4, None, Action::OpenVoltBoost),
-        ];
-        let (item_h, gap) = if rail_h < 380.0 {
-            (40.0, 4.0)
-        } else if rail_h < 520.0 {
-            (50.0, 6.0)
-        } else {
-            (62.0, 8.0)
-        };
-        let total = item_h * right_nav.len() as f32 + gap * (right_nav.len() as f32 - 1.0);
-        let start_y = rail_y + (rail_h - total).max(0.0) * 0.5;
-        for (i, (label, glyph, tab, action)) in right_nav.iter().enumerate() {
-            let y = start_y + i as f32 * (item_h + gap);
-            let rect = [rail_x + 6.0, y, LIQUID_RIGHT_RAIL_WIDTH - 12.0, item_h];
-            let active = match *tab {
-                Some(tab) => self.home_tab == tab && self.catalog.page == Page::Play,
-                None => self.catalog.volt_boost_modal,
-            };
-            if active {
-                ui.rounded(rect[0], rect[1], rect[2], rect[3], 12.0, theme::HOVER());
-                ui.border(rect[0], rect[1], rect[2], rect[3], 12.0, theme::BORDER());
-                let inset = (item_h * 0.22).max(7.0);
-                ui.rounded(rect[0] - 1.0, rect[1] + inset, 2.2, rect[3] - inset * 2.0, 1.0, theme::TEXT());
-            }
-            let (icon_y, label_y, font) = if item_h < 48.0 {
-                (14.0, 22.0, 9.0)
-            } else if item_h < 56.0 {
-                (16.0, 26.0, 9.5)
-            } else {
-                (18.0, 31.0, 10.0)
-            };
-            let col = if active { theme::TEXT() } else { theme::MUTED() };
-            draw_tile_icon(ui, *glyph, rect[0] + rect[2] * 0.5, rect[1] + icon_y, col);
-            draw_centered_text(
-                ui,
-                Face::LauncherMedium,
-                font,
-                [rect[0] + 1.0, rect[1] + label_y, rect[2] - 2.0, (item_h - label_y + 1.0).max(16.0)],
-                if active { theme::TEXT() } else { theme::DIM() },
-                label,
-            );
-            self.targets.push((rect, *action));
+        let (surface_right, home_tab, page) =
+            (self.surface_right, self.home_tab, self.catalog.page);
+        draw_right_rail(ui, area, surface_right, home_tab, page, &mut self.targets);
+    }
+
+    /// Draws the destination rail and returns `area` narrowed so its content
+    /// stays clear of it. Catalog pages keep the shell's left navigation, so
+    /// the right side behaves exactly as it does on Home.
+    fn with_right_rail(&mut self, ui: &mut Ui, area: [f32; 4]) -> [f32; 4] {
+        if !theme::liquid() {
+            return area;
         }
+        let (surface_right, home_tab, page) =
+            (self.surface_right, self.home_tab, self.catalog.page);
+        let surface = [0.0, 0.0, surface_right, ui.h];
+        draw_right_rail(ui, surface, surface_right, home_tab, page, &mut self.targets);
+        let reserve =
+            LIQUID_RIGHT_RAIL_INSET + LIQUID_RIGHT_RAIL_WIDTH + LIQUID_RAIL_CONTENT_GAP;
+        [area[0], area[1], (area[2] - reserve).max(160.0), area[3]]
+    }
+
+    /// The Discord link as its own glass row. It used to float beside the
+    /// account chip, crowding three controls into one corner.
+    fn draw_discord_row(&mut self, ui: &mut Ui, rect: [f32; 4]) {
+        if rect[2] < 64.0 || rect[3] < 26.0 {
+            return;
+        }
+        let v_start = ui.batch_mut().vertices.len();
+        ui.rounded(rect[0], rect[1], rect[2], rect[3], rect[3] * 0.5, theme::GLASS());
+        ui.border(rect[0], rect[1], rect[2], rect[3], rect[3] * 0.5, theme::GLASS_BORDER());
+        draw_discord_icon(ui, rect[0] + rect[3] * 0.55, rect[1] + rect[3] * 0.5, theme::TEXT(), theme::GLASS());
+        let label = ui.fit_text(Face::LauncherMedium, 11.5, "Join the Discord", rect[2] - rect[3] - 10.0);
+        ui.text(Face::LauncherMedium, 11.5, rect[0] + rect[3] + 2.0,
+            text_vcenter(rect[1], rect[3], 11.5), theme::MUTED(), &label);
+        press_scale(ui, v_start, rect, Action::Discord);
+        self.targets.push((rect, Action::Discord));
     }
 
     /// Draw the compact source switch as one fitted button instead of
@@ -1707,9 +1823,10 @@ impl DrawCtx<'_> {
             self.targets.push((back, Action::HomeTab(HomeTab::Overview)));
             let title = match self.home_tab {
                 HomeTab::Worlds => "Worlds",
-                HomeTab::Multiplayer => "Multiplayer",
-                HomeTab::Screenshots => "Captures",
+                HomeTab::Multiplayer => "Servers",
+                HomeTab::Screenshots => "Screenshots",
                 HomeTab::Replays => "Replays",
+                HomeTab::VoltBoost => "Volt Boost",
                 _ => "Launcher log",
             };
             let title_fit = ui.fit_text(Face::Display, 21.0, title, (w - 106.0).max(24.0));
@@ -1720,6 +1837,11 @@ impl DrawCtx<'_> {
             if let Some((dx, alpha)) = self.tab_anim {
                 ui.animate_vertices(body_v_start, dx, 0.0, 1.0,
                     [x + w * 0.5, body[1] + body[3] * 0.5], alpha);
+            }
+            // The destination rail stays put, so Worlds / Servers / Shots /
+            // Replays / Boost are one tap apart instead of a trip Home first.
+            if liquid {
+                self.draw_liquid_right_rail(ui, area);
             }
             return;
         }
@@ -1758,7 +1880,11 @@ impl DrawCtx<'_> {
         // ---- Account chip, top-right: skin head + name -> Account page ----
         let (name, badge) = account_status.split_once(" • ").map(|(n,b)| (n.to_owned(), b.to_owned())).unwrap_or_else(|| (account_status.to_owned(), "Offline".to_owned()));
         let chip_h = 44.0;
-        let chip_w = (ui.measure(Face::LauncherMedium, 13.5, &name) + chip_h + 26.0).min(w * 0.30).max(132.0);
+        let chip_room = (indicator_right_room(self.surface_right) - 8.0).max(132.0);
+        let chip_w = (ui.measure(Face::LauncherMedium, 13.5, &name) + chip_h + 26.0)
+            .min(w * 0.30)
+            .min(chip_room)
+            .max(132.0);
         let chip = [ax + self.surface_right - m - chip_w, ay + m, chip_w, chip_h];
         ui.rounded(chip[0], chip[1], chip[2], chip[3], chip_h * 0.5, theme::GLASS());
         ui.border(chip[0], chip[1], chip[2], chip[3], chip_h * 0.5, theme::GLASS_BORDER());
@@ -1782,8 +1908,10 @@ impl DrawCtx<'_> {
 
         // ---- The hero: Play at middle-bottom, 3D player above it ----
         let play_h = if compact { 68.0 } else { 82.0 };
-        // Move Play to middle-bottom as requested (arrow down in markup)
-        let py0 = ay + h - m - play_h - 22.0;
+        // Play sits on the bottom edge of the content column, centred exactly
+        // between the two rails: the old -22 offset read as "left of centre"
+        // because the right column is wider than the left.
+        let py0 = ay + h - m - play_h;
         let play_w = if compact { 236.0 } else { 320.0 };
         // center between rails (left 78 + right 88) so Play doesn't overlap sidebars
         let rail_w2 = 78.0;
@@ -1796,7 +1924,7 @@ impl DrawCtx<'_> {
         let char_h = (h * 0.40).clamp(160.0, 300.0).min((py0 - (ay + m + 56.0)).max(100.0));
         if char_h >= 100.0 {
             let char_x = ax + rail_w2 + 16.0 + (content_w - char_w)*0.5;
-            let char_y = (py0 - char_h - 18.0).max(ay + m + 52.0);
+            let char_y = (py0 - char_h - 12.0).max(ay + m + 52.0);
             let char_rect = [char_x, char_y, char_w, char_h];
             let default_uuid = self.volt_accounts.active().map(|a| a.uuid_u128()).unwrap_or(0);
             crate::skin_preview::draw_player_3d(ui, char_rect, self.preview_yaw, self.preview_pitch, self.idle_phase, self.preview_vel_yaw, 2, 3, self.volt_accounts.active_skin_preview(), self.volt_accounts.active_cape_preview(), default_uuid);
@@ -1854,17 +1982,38 @@ impl DrawCtx<'_> {
                 theme::STATUS_BAD(), &e);
         }
 
-        // Discord sits beside the account control, keeping the utility action
-        // close without competing with the right-side destinations.
-        let fab = 44.0;
-        let help_gap = 8.0;
-        let help = [chip[0] - fab - help_gap, chip[1], fab, fab];
-        ui.rounded(help[0], help[1], help[2], help[3], fab * 0.5, theme::GLASS());
-        ui.border(help[0], help[1], help[2], help[3], fab * 0.5, theme::GLASS_BORDER());
-        draw_discord_icon(ui, help[0] + fab * 0.5, help[1] + fab * 0.5, theme::TEXT(), theme::GLASS());
-        self.targets.push((help, Action::Discord));
+        // ---- Discord, in its own glass row under the account chip. It used
+        // to float beside the chip, which crowded three controls into one
+        // corner of the dashboard.
+        let row_h = 38.0;
+        let row_y = chip[1] + chip_h + 8.0;
+        let row_w = chip_w.min((indicator_right_room(self.surface_right) - 8.0).max(0.0)).max(chip_w * 0.75);
+        if row_w >= 132.0 {
+            self.draw_discord_row(ui, [chip[0], row_y, row_w, row_h]);
+        }
 
-        // ---- Right rail: the final nav control sits at the visible edge. ----
+        // ---- Bottom-left: the profile chip in its own column, clear of Play.
+        let col_x = ax + rail_w2 + 16.0;
+        let col_room = ((px0 - col_x) - 10.0).max(0.0);
+        let acc_h = 40.0;
+        let acc = [col_x, ay + h - m - acc_h, col_room.min(196.0), acc_h];
+        if acc[2] >= 88.0 {
+            ui.rounded(acc[0], acc[1], acc[2], acc[3], acc_h * 0.5, theme::GLASS());
+            ui.border(acc[0], acc[1], acc[2], acc[3], acc_h * 0.5, theme::GLASS_BORDER());
+            ui.rounded(acc[0] + 6.0, acc[1] + 6.0, acc_h - 12.0, acc_h - 12.0,
+                (acc_h - 12.0) * 0.5, theme::CARD_INNER());
+            let initial = name.chars().next().map(|c| c.to_ascii_uppercase()).unwrap_or('V');
+            draw_centered_text(ui, Face::LauncherMedium, 14.0,
+                [acc[0] + 6.0, acc[1] + 6.0, acc_h - 12.0, acc_h - 12.0],
+                hex(0xf2f4f8, 255), &initial.to_string());
+            let fit = ui.fit_text(Face::LauncherMedium, 11.5, &name, acc[2] - acc_h - 12.0);
+            ui.text(Face::LauncherMedium, 11.5, acc[0] + acc_h,
+                text_vcenter(acc[1], acc_h, 11.5), theme::MUTED(), &fit);
+            self.targets.push((acc, Action::Page(Page::Account)));
+        }
+
+        // ---- Right rail: Worlds, Servers, Shots, Replays, Boost. Navigation
+        // only; each tab's content lives in the centre column. ----
         self.draw_liquid_right_rail(ui, area);
     }
 
@@ -2390,7 +2539,7 @@ impl DrawCtx<'_> {
                     let cols = if w < 600.0 { 1 } else { 2 };
                     let gap = 10.0;
                     let card_w = (w - 16.0 - gap * (cols as f32 - 1.0)) / cols as f32;
-                    let card_h = 118.0;
+                    let card_h = 128.0;
                     let top = y + 60.0;
                     let bottom = y + h;
                     let total_rows = worlds.len().div_ceil(cols);
@@ -2408,27 +2557,31 @@ impl DrawCtx<'_> {
                         let rect = [cx2, cy2, card_w, card_h];
                         ui.rounded(rect[0], rect[1], rect[2], rect[3], 12.0, theme::CARD());
                         ui.border(rect[0], rect[1], rect[2], rect[3], 12.0, theme::BORDER());
-                        let photo = [rect[0] + 4.0, rect[1] + 4.0, rect[2] - 8.0, 68.0];
+                        let photo = [rect[0] + 4.0, rect[1] + 4.0, rect[2] - 8.0, 78.0];
                         ui.rounded(photo[0], photo[1], photo[2], photo[3], 8.0, theme::GLASS_INNER());
-                        let icon_path = path.join("icon.png");
-                        let has_icon = std::fs::symlink_metadata(&icon_path)
-                            .is_ok_and(|meta| meta.is_file() && !meta.file_type().is_symlink());
-                        if has_icon {
-                            let key = self.catalog.queue_local_preview(&icon_path, true);
+                        // The save's real picture: its icon.png, or its newest
+                        // world screenshot when no icon was ever saved.
+                        let picture = std::fs::symlink_metadata(path.join("icon.png"))
+                            .is_ok_and(|meta| meta.is_file() && !meta.file_type().is_symlink())
+                            .then(|| path.join("icon.png"))
+                            .or_else(|| world_picture(path));
+                        if let Some(picture) = picture {
+                            let key = self.catalog.queue_local_preview(&picture, true);
                             if let Some(image) = self.catalog.preview(&key) {
                                 ui.draw_dynamic_rgba_fit(preview_slot(i), image.hash, image.width, image.height,
                                     &image.rgba, photo[0] + 2.0, photo[1] + 2.0, photo[2] - 4.0, photo[3] - 4.0, 255);
                             } else {
-                                let message = if self.catalog.preview_failed(&key) { "World icon unavailable" } else { "Loading world icon…" };
+                                let message = if self.catalog.preview_failed(&key) { "World picture unavailable" } else { "Loading world picture…" };
                                 draw_centered_text(ui, Face::LauncherRegular, 10.5, photo, theme::DIM(), message);
                             }
                         } else {
-                            draw_centered_text(ui, Face::LauncherRegular, 10.5, photo, theme::DIM(), "No icon.png saved");
+                            draw_centered_text(ui, Face::LauncherRegular, 10.5, photo, theme::DIM(), "No world screenshot yet");
                         }
                         let label = ui.fit_text(Face::LauncherMedium, 13.0, world, rect[2] - 16.0);
-                        ui.text(Face::LauncherMedium, 13.0, rect[0] + 8.0, rect[1] + 80.0, theme::TEXT(), &label);
-                        ui.text(Face::LauncherRegular, 10.5, rect[0] + 8.0, rect[1] + 98.0, theme::MUTED(), "Tap to preview · Back returns");
+                        ui.text(Face::LauncherMedium, 13.0, rect[0] + 8.0, rect[1] + 90.0, theme::TEXT(), &label);
+                        ui.text(Face::LauncherRegular, 10.5, rect[0] + 8.0, rect[1] + 106.0, theme::MUTED(), "Tap the picture to open it full screen");
                         self.targets.push((rect, Action::ViewWorld(i)));
+                        self.targets.push((photo, Action::ViewWorld(i)));
                     }
                     let bounds = [ui.to_batch(x), ui.to_batch(top), ui.to_batch(x + w), ui.to_batch(bottom)];
                     ui.batch_mut().clip_since(start, bounds[0], bounds[1], bounds[2], bounds[3]);
@@ -2513,7 +2666,7 @@ impl DrawCtx<'_> {
                 let cols = if w < 560.0 { 2 } else { 3 };
                 let gap = 10.0;
                 let card_w = (w - 16.0 - gap*(cols as f32 -1.0))/cols as f32;
-                let card_h = 98.0;
+                let card_h = 104.0;
                 let rec_h = if clips.is_empty() { 0.0 } else { clips.len() as f32 * 40.0 + 8.0 };
                 let grid_top = top + rec_h;
                 let total_rows = shots.len().div_ceil(cols.max(1));
@@ -2543,7 +2696,7 @@ impl DrawCtx<'_> {
                     let rect = [sx, sy, card_w, card_h];
                     ui.rounded(rect[0], rect[1], rect[2], rect[3], 10.0, theme::CARD());
                     ui.border(rect[0], rect[1], rect[2], rect[3], 10.0, theme::BORDER());
-                    let photo = [rect[0] + 4.0, rect[1] + 4.0, rect[2] - 8.0, 64.0];
+                    let photo = [rect[0] + 4.0, rect[1] + 4.0, rect[2] - 8.0, 70.0];
                     ui.rounded(photo[0], photo[1], photo[2], photo[3], 8.0, theme::GLASS_INNER());
                     let key = self.catalog.queue_local_preview(&game_home.join("screenshots").join(shot), false);
                     if let Some(image) = self.catalog.preview(&key) {
@@ -2554,8 +2707,9 @@ impl DrawCtx<'_> {
                         draw_centered_text(ui, Face::LauncherRegular, 10.5, photo, theme::DIM(), message);
                     }
                     let label = ui.fit_text(Face::LauncherRegular, 10.5, shot, rect[2] - 10.0);
-                    ui.text(Face::LauncherRegular, 10.5, rect[0] + 5.0, rect[1] + 74.0, theme::MUTED(), &label);
+                    ui.text(Face::LauncherRegular, 10.5, rect[0] + 5.0, rect[1] + 80.0, theme::MUTED(), &label);
                     self.targets.push((rect, Action::ViewScreenshot(i)));
+                    self.targets.push((photo, Action::ViewScreenshot(i)));
                 }
                 let bounds = [ui.to_batch(x), ui.to_batch(top), ui.to_batch(x+w), ui.to_batch(bottom)];
                 ui.batch_mut().clip_since(start,bounds[0],bounds[1],bounds[2],bounds[3]);
@@ -2625,6 +2779,14 @@ impl DrawCtx<'_> {
                 let bounds = [ui.to_batch(x), ui.to_batch(top), ui.to_batch(x+w), ui.to_batch(bottom)];
                 ui.batch_mut().clip_since(start,bounds[0],bounds[1],bounds[2],bounds[3]);
             }
+            HomeTab::VoltBoost => {
+                // The dashboard's Boost card, inline, so the destination rail
+                // stays usable while it is open.
+                let panel = [x + 8.0, y + 8.0, (w - 16.0).max(0.0), (h - 16.0).max(0.0)];
+                let (targets, list_targets) = (&mut self.targets, &mut self.list_targets);
+                let (list_view, catalog) = (&mut self.list_view, &mut self.catalog);
+                *list_view = draw_volt_boost_panel(ui, targets, list_targets, catalog, panel, false);
+            }
             HomeTab::Console => {
                 ui.text(Face::LauncherMedium, 15.0, x + 8.0, y + 8.0, theme::TEXT(), "Launcher diagnostics");
                 let status = if self.catalog.status.is_empty() { "Tap Refresh to read the latest local diagnostic summary." } else { &self.catalog.status };
@@ -2683,11 +2845,22 @@ impl DrawCtx<'_> {
                 ui.border(back[0], back[1], back[2], back[3], 17.0, theme::GLASS_BORDER());
                 draw_centered_text(ui, Face::LauncherMedium, 12.0, back, theme::TEXT(), "← Back");
                 self.targets.push((back, Action::CloseDetail));
-                ui.text(Face::LauncherMedium, 22.0, cx+100.0, cy+4.0, theme::TEXT(), &ui.fit_text(Face::LauncherMedium, 22.0, &proj.title, cw-120.0));
-                ui.text(Face::LauncherRegular, 12.5, cx+100.0, cy+32.0, theme::MUTED(), &ui.fit_text(Face::LauncherRegular, 12.5, &proj.summary, cw-120.0));
+                // Home, so a detail page is never a dead end once the shell's
+                // navigation is off screen.
+                let home_btn = [back[0] + back[2] + 8.0, back[1], 84.0, back[3]];
+                if home_btn[0] + home_btn[2] < cx + cw - 90.0 {
+                    ui.rounded(home_btn[0], home_btn[1], home_btn[2], home_btn[3], 17.0, theme::GLASS());
+                    ui.border(home_btn[0], home_btn[1], home_btn[2], home_btn[3], 17.0, theme::GLASS_BORDER());
+                    draw_centered_text(ui, Face::LauncherMedium, 12.0, home_btn, theme::TEXT(), "Home");
+                    self.targets.push((home_btn, Action::Page(Page::Play)));
+                }
+                let head_x = home_btn[0] + home_btn[2] + 12.0;
+                let head_w = (cx + cw - head_x).max(80.0);
+                ui.text(Face::LauncherMedium, 22.0, head_x, cy+4.0, theme::TEXT(), &ui.fit_text(Face::LauncherMedium, 22.0, &proj.title, head_w));
+                ui.text(Face::LauncherRegular, 12.5, head_x, cy+32.0, theme::MUTED(), &ui.fit_text(Face::LauncherRegular, 12.5, &proj.summary, head_w));
                 // Tabs: About / Screenshots / Download
                 let tab_y = cy + 52.0;
-                let tab_w = 108.0;
+                let tab_w = ((cw - 16.0) / 3.0).clamp(72.0, 108.0);
                 for (i, label) in ["About","Screenshots","Download"].iter().enumerate() {
                     let r = [cx + i as f32*(tab_w+8.0), tab_y, tab_w, 32.0];
                     let active = self.catalog.detail_tab == i as u8;
@@ -2702,19 +2875,26 @@ impl DrawCtx<'_> {
                     self.targets.push((r, Action::DetailTab(i as u8)));
                 }
                 let body = [cx, tab_y+44.0, cw, ch - (tab_y+44.0 - cy) - 48.0];
-                // Error banner for Horizon failures — also show when status contains failure text even if failed not set (e.g. Horizon "no compatible build")
-                let show_horizon_error = if let Some((src,id)) = self.catalog.failed.as_ref() {
-                    *src==proj.source && id.as_str()==proj.id.as_str()
-                } else {
-                    // status-driven fallback: last download for this project failed with message
-                    let low = self.catalog.status.to_lowercase();
-                    (low.contains("failed") || low.contains("no compatible") || low.contains("not available") || low.contains("could not")) && !self.catalog.status.is_empty()
-                };
-                if show_horizon_error {
-                    let msg = if self.catalog.status.is_empty() { "Download failed – check connection or try again.".to_owned() } else { self.catalog.status.clone() };
+                // This project's own failure, with its reason. The old banner
+                // guessed from the shared status line, so a failed shader could
+                // leave its page looking like nothing had happened.
+                let failure = self
+                    .catalog
+                    .failure_for(&proj)
+                    .map(str::to_owned)
+                    .or_else(|| {
+                        self.catalog
+                            .failed
+                            .as_ref()
+                            .is_some_and(|(src, id)| *src == proj.source && id.as_str() == proj.id.as_str())
+                            .then(|| "Download failed – check the connection and try again.".to_owned())
+                    });
+                let show_horizon_error = failure.is_some();
+                if let Some(msg) = failure.as_deref() {
+                    let msg = ui.fit_text(Face::LauncherRegular, 12.0, msg, body[2] - 24.0);
                     ui.rounded(body[0], body[1], body[2], 36.0, 10.0, theme::CARD());
                     ui.border(body[0], body[1], body[2], 36.0, 10.0, hex(0xff4444, 80));
-                    ui.text(Face::LauncherMedium, 12.0, body[0]+12.0, body[1]+10.0, hex(0xff6b6b,255), &ui.fit_text(Face::LauncherMedium, 12.0, &msg, body[2]-24.0));
+                    ui.text(Face::LauncherMedium, 12.0, body[0]+12.0, body[1]+10.0, hex(0xff6b6b,255), &msg);
                 }
                 if self.catalog.detail_tab==0 {
                     ui.rounded(body[0], body[1]+ (if self.catalog.failed.is_some(){40.0}else{0.0}), body[2], 140.0, 12.0, theme::CARD());
@@ -2807,16 +2987,24 @@ impl DrawCtx<'_> {
                     }
                 } else {
                     // Download tab
-                    let btn = [body[0]+14.0, body[1]+ (if self.catalog.failed.is_some(){40.0}else{0.0}) + 12.0, 200.0, 44.0];
+                    let btn = [body[0]+14.0, body[1]+ (if show_horizon_error {40.0} else {0.0}) + 12.0, 200.0, 44.0];
                     let downloading = self.catalog.downloading.as_ref().is_some_and(|(s,id)| *s==proj.source && id.as_str()==proj.id.as_str());
                     if downloading {
+                        let progress = *self.catalog.progress.lock().unwrap_or_else(|e| e.into_inner());
                         ui.rounded(btn[0], btn[1], btn[2], btn[3], 10.0, theme::GLASS());
-                        draw_centered_text(ui, Face::LauncherMedium, 13.0, btn, theme::MUTED(), "Downloading…");
-                    } else if self.catalog.failed.as_ref().is_some_and(|(s,id)| *s==proj.source && id.as_str()==proj.id.as_str()) {
+                        draw_centered_text(ui, Face::LauncherMedium, 13.0, btn, theme::MUTED(),
+                            &format!("Downloading… {:.0}%", progress * 100.0));
+                        let note = if self.catalog.job_is_stalled(std::time::Duration::from_secs(20)) {
+                            "Still working: verifying the file can take a moment on mobile data."
+                        } else {
+                            "Keep the app open until it finishes."
+                        };
+                        ui.text(Face::LauncherRegular, 11.5, body[0]+14.0, btn[1]+54.0, theme::MUTED(),
+                            &ui.fit_text(Face::LauncherRegular, 11.5, note, body[2]-28.0));
+                    } else if let Some(err) = self.catalog.failure_for(&proj).map(str::to_owned) {
                         styled_button(ui, self.targets, btn, "Retry download", Action::Install(idx), BtnStyle::Primary, true);
-                        // Show error explicitly
-                        let err = if self.catalog.status.is_empty() { "Horizon download failed – no downloadable ZIP or checksum error." } else { &self.catalog.status };
-                        ui.text(Face::LauncherRegular, 11.5, body[0]+14.0, btn[1]+54.0, hex(0xff6b6b,255), &ui.fit_text(Face::LauncherRegular, 11.5, err, body[2]-28.0));
+                        let err = ui.fit_text(Face::LauncherRegular, 11.5, &err, body[2]-28.0);
+                        ui.text(Face::LauncherRegular, 11.5, body[0]+14.0, btn[1]+54.0, hex(0xff6b6b,255), &err);
                     } else {
                         styled_button(ui, self.targets, btn, "Download & Install", Action::Install(idx), BtnStyle::Primary, true);
                         ui.text(Face::LauncherRegular, 11.5, body[0]+14.0, btn[1]+54.0, theme::MUTED(), "Will appear in Installed after download.");
@@ -2825,7 +3013,10 @@ impl DrawCtx<'_> {
                 // Footer back note
                 ui.rounded(cx, cy+ch-44.0, cw, 44.0, 11.0, theme::CARD());
                 ui.border(cx, cy+ch-44.0, cw, 44.0, 11.0, theme::BORDER());
-                draw_centered_text(ui, Face::LauncherRegular, 12.0, [cx, cy+ch-44.0, cw, 44.0], theme::MUTED(), "Tip: Back returns to list · About shows info, Screenshots shows photos, Download installs");
+                styled_button(ui, self.targets, [cx + 10.0, cy+ch-40.0, 100.0, 36.0],
+                    "← List", Action::CloseDetail, BtnStyle::Secondary, true);
+                styled_button(ui, self.targets, [cx + 118.0, cy+ch-40.0, 88.0, 36.0],
+                    "Home", Action::Page(Page::Play), BtnStyle::Secondary, true);
                 return;
             } else {
                 self.catalog.detail_index=None;
@@ -3456,6 +3647,13 @@ impl DrawCtx<'_> {
                             BtnStyle::Primary,
                             true,
                         );
+                        // Say why the last attempt failed, on the card itself:
+                        // otherwise the button just changed its word to Retry.
+                        if let Some(why) = self.catalog.failure_for(p) {
+                            let why = ui.fit_text(Face::LauncherRegular, 10.0, why, btn_rect[2]);
+                            ui.text(Face::LauncherRegular, 10.0, btn_rect[0], btn_rect[1] - 12.0,
+                                hex(0xff6b6b, 230), &why);
+                        }
                     }
                 }
 
@@ -6508,8 +6706,9 @@ impl Launcher {
         let compact = w < 760.0;
         // Liquid Glass keeps Home full-bleed so its left rail remains visible
         // on secondary tabs; the classic lobby is full-bleed on Overview.
-        let lobby = self.catalog.page == Page::Play && self.home_tab == HomeTab::Overview;
-        let full_bleed_home = lobby || (self.catalog.page == Page::Play && theme::liquid());
+        // Home and all of its tabs are always full-bleed in Liquid Glass: both
+        // rails are part of the layout, not chrome around it.
+        let full_bleed_home = self.catalog.page == Page::Play && theme::liquid();
         let account_status = self
             .volt_accounts
             .active()
@@ -6561,12 +6760,18 @@ impl Launcher {
             page_v_start = ui.batch_mut().vertices.len();
             let page = ctx.catalog.page;
             match page {
-                Page::Play | Page::Mods => ctx.draw_instance_page(&mut ui, content_area, compact, &account_status),
+                Page::Play => ctx.draw_instance_page(&mut ui, content_area, compact, &account_status),
+                Page::Mods => {
+                    // Browse shares the destination rail with Home.
+                    let area = ctx.with_right_rail(&mut ui, content_area);
+                    ctx.draw_instance_page(&mut ui, area, compact, &account_status)
+                }
                 Page::Account => {
                     ctx.draw_account_page(&mut ui, content_area, compact, &account_status)
                 }
                 Page::Packs | Page::Shaders => {
-                    ctx.draw_catalog_page(&mut ui, content_area, compact, page, &account_status)
+                    let area = ctx.with_right_rail(&mut ui, content_area);
+                    ctx.draw_catalog_page(&mut ui, area, compact, page, &account_status)
                 }
                 Page::Installed => {
                     ctx.draw_installed_page(&mut ui, content_area, compact, &account_status)
@@ -7357,6 +7562,14 @@ impl Launcher {
             }
             Some(Action::LoginLink) => self.login.open_link(),
             Some(Action::HomeTab(tab)) => {
+                // The rail is always reachable, including from the catalog
+                // pages: a destination tap returns to Home on that tab.
+                if self.catalog.page != Page::Play {
+                    self.catalog.page = Page::Play;
+                    self.catalog.detail_index = None;
+                    self.catalog.editing = None;
+                    self.home_tab = HomeTab::Overview;
+                }
                 if self.catalog.page == Page::Play && tab != self.home_tab {
                     let order = |t: HomeTab| match t {
                         HomeTab::Overview => 0,
@@ -7364,7 +7577,8 @@ impl Launcher {
                         HomeTab::Multiplayer => 3,
                         HomeTab::Replays => 4,
                         HomeTab::Screenshots => 5,
-                        HomeTab::Console => 6,
+                        HomeTab::VoltBoost => 6,
+                        HomeTab::Console => 7,
                     };
                     let dir = if order(tab) >= order(self.home_tab) { 1.0 } else { -1.0 };
                     self.tab_anim = Some((std::time::Instant::now(), dir));
@@ -7376,6 +7590,9 @@ impl Launcher {
                     self.catalog.refresh_screenshots(&self.home);
                 } else if tab == HomeTab::Replays {
                     self.catalog.refresh_replays(&self.home);
+                } else if tab == HomeTab::VoltBoost {
+                    // The inline list opens at the top, like the dialog does.
+                    self.catalog.volt_modal_scroll = 0.0;
                 }
                 self.home_tab = tab;
                 self.catalog.page = Page::Play;
@@ -7714,8 +7931,17 @@ impl Launcher {
                 };
             }
             Some(Action::OpenVoltBoost) => {
-                self.catalog.volt_boost_modal = true;
+                // Boost opens as a tab so the launcher and its rails stay
+                // reachable; the dialog only serves the classic dashboard.
+                self.catalog.page = Page::Play;
+                self.catalog.detail_index = None;
+                self.home_tab = HomeTab::VoltBoost;
                 self.catalog.volt_modal_scroll = 0.0;
+                self.catalog.volt_boost_modal = false;
+                self.catalog.scroll = 0.0;
+                if crate::platform::active() {
+                    crate::platform::hide();
+                }
             }
             Some(Action::CloseVoltBoost) => {
                 self.catalog.volt_boost_modal = false;
@@ -8298,15 +8524,13 @@ fn draw_update_prompt(
     );
 }
 
+#[allow(dead_code)]
 fn draw_volt_boost_modal(
     ui: &mut Ui,
     targets: &mut Vec<([f32; 4], Action)>,
     list_targets: &mut Vec<([f32; 4], Action)>,
     catalog: &mut Catalog,
 ) -> Option<[f32; 3]> {
-    use horizon_client::extras::Item;
-    use horizon_client::volt_features::VoltBoostPreset;
-
     let (w, h) = (ui.w, ui.h);
     let scale = ui.density / ui.batch.scale;
     ui.batch
@@ -8316,6 +8540,23 @@ fn draw_volt_boost_modal(
     let mh = (h - 28.0).clamp(240.0, 500.0);
     let mx = ((w - mw) * 0.5).round();
     let my = ((h - mh) * 0.5).round();
+    draw_volt_boost_panel(ui, targets, list_targets, catalog, [mx, my, mw, mh], true)
+}
+
+/// The Volt Boost card. `modal` keeps the Done button (the dialog closes); the
+/// tab form swaps it for Back, which returns to the dashboard.
+fn draw_volt_boost_panel(
+    ui: &mut Ui,
+    targets: &mut Vec<([f32; 4], Action)>,
+    list_targets: &mut Vec<([f32; 4], Action)>,
+    catalog: &mut Catalog,
+    panel: [f32; 4],
+    modal: bool,
+) -> Option<[f32; 3]> {
+    use horizon_client::extras::Item;
+    use horizon_client::volt_features::VoltBoostPreset;
+
+    let [mx, my, mw, mh] = panel;
 
     ui.rounded(mx, my, mw, mh, 16.0, theme::CARD());
     ui.rounded(mx + 8.0, my + 8.0, mw * 0.55, 86.0, 12.0, theme::HERO_GLOW_SOFT());
@@ -8497,14 +8738,26 @@ fn draw_volt_boost_modal(
         BtnStyle::CrimsonOutline,
         true,
     );
-    styled_button(
-        ui,
-        targets,
-        [mx + mw - 122.0, footer_y + 2.0, 104.0, 36.0],
-        "Done",
-        Action::CloseVoltBoost,
-        BtnStyle::Primary,
-        true,
-    );
+    if modal {
+        styled_button(
+            ui,
+            targets,
+            [mx + mw - 122.0, footer_y + 2.0, 104.0, 36.0],
+            "Done",
+            Action::CloseVoltBoost,
+            BtnStyle::Primary,
+            true,
+        );
+    } else {
+        styled_button(
+            ui,
+            targets,
+            [mx + mw - 122.0, footer_y + 2.0, 104.0, 36.0],
+            "Back",
+            Action::HomeTab(HomeTab::Overview),
+            BtnStyle::Primary,
+            true,
+        );
+    }
     Some([list_top, list_bottom, max_scroll])
 }
