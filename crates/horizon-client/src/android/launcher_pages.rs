@@ -2784,8 +2784,8 @@ impl DrawCtx<'_> {
                 // stays usable while it is open.
                 let panel = [x + 8.0, y + 8.0, (w - 16.0).max(0.0), (h - 16.0).max(0.0)];
                 let (targets, list_targets) = (&mut self.targets, &mut self.list_targets);
-                let (list_view, catalog) = (&mut self.list_view, &mut self.catalog);
-                *list_view = draw_volt_boost_panel(ui, targets, list_targets, catalog, panel, false);
+                *self.list_view =
+                    draw_volt_boost_panel(ui, targets, list_targets, &mut self.catalog, panel, false);
             }
             HomeTab::Console => {
                 ui.text(Face::LauncherMedium, 15.0, x + 8.0, y + 8.0, theme::TEXT(), "Launcher diagnostics");
@@ -2990,7 +2990,7 @@ impl DrawCtx<'_> {
                     let btn = [body[0]+14.0, body[1]+ (if show_horizon_error {40.0} else {0.0}) + 12.0, 200.0, 44.0];
                     let downloading = self.catalog.downloading.as_ref().is_some_and(|(s,id)| *s==proj.source && id.as_str()==proj.id.as_str());
                     if downloading {
-                        let progress = *self.catalog.progress.lock().unwrap_or_else(|e| e.into_inner());
+                        let progress = self.catalog.progress();
                         ui.rounded(btn[0], btn[1], btn[2], btn[3], 10.0, theme::GLASS());
                         draw_centered_text(ui, Face::LauncherMedium, 13.0, btn, theme::MUTED(),
                             &format!("Downloading… {:.0}%", progress * 100.0));

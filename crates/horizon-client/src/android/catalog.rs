@@ -705,6 +705,11 @@ impl Catalog {
         (*source == project.source && id == &project.id).then_some(message.as_str())
     }
 
+    /// The running job's progress, 0..1, for the Download tab's percentage.
+    pub fn progress(&self) -> f32 {
+        *self.progress.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
     /// True when a job has been running long enough that the UI should say it
     /// is still alive instead of showing an unchanging "Downloading…".
     pub fn job_is_stalled(&self, after: std::time::Duration) -> bool {
