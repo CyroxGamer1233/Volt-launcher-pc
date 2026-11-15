@@ -150,40 +150,64 @@ impl Game<'_> {
             }),
         })
     }
-    /// Reloads the mod on/off switches (and the extras beside them) from
-    /// `dir`'s `horizon-mods.txt`, and says what changed, so a toggle that
-    /// reached the game is visible proof on screen and in the log.
+    /// Reloads the mod on/off switches and the adjacent extras file from `dir`.
+    /// The live runtime, renderer settings and Android bindings are updated too.
     pub(super) fn reload_mod_switches(&mut self, dir: &std::path::Path, announce: bool) {
-        let before = self.settings.mods.disabled.clone();
+        let before_enabled = self.settings.mods.enabled.clone();
+        let before_disabled = self.settings.mods.disabled.clone();
+        let before_keys = self.settings.mods.keys.clone();
+        let before_extras = self.settings.extras.clone();
         let fresh = horizon_client::mod_list::ModList::load(dir);
         self.settings.mods.enabled = fresh.enabled;
         self.settings.mods.disabled = fresh.disabled;
         self.settings.mods.keys = fresh.keys;
         self.settings.extras = horizon_client::extras::Extras::load(dir);
+        let extras_changed = self.settings.extras != before_extras;
+        if extras_changed {
+            // Applying every setting also reapplies window and renderer state.
+            // A mod-switch-only reload does not need those side effects.
+            self.apply_settings();
+            self.sync_agent_control();
+        }
+        // Keep the file watcher in step with explicit in-process reload notes;
+        // otherwise it would immediately process the same write again.
+        if let Ok(current_dir) = std::env::current_dir()
+            && current_dir.as_path() == dir
+        {
+            self.mods_file_stamp = std::fs::metadata(dir.join("horizon-mods.txt"))
+                .and_then(|m| m.modified())
+                .ok();
+        }
         // `poll_pads` notices the "3D Skins" flip and rebuilds models.
         self.list_native_mods();
-        if self.settings.mods.disabled == before {
+        // A launcher-side `.hmod` toggle changes `enabled`, not `disabled`.
+        // Reconcile the running Wasm set too; native rows are refreshed above.
+        self.sync_mods();
+        #[cfg(feature = "mods")]
+        if self.settings.mods.keys != before_keys {
+            let chosen = &self.settings.mods;
+            self.mods.mods.set_bindings(|id| chosen.keys_of(id));
+        }
+        let changed = self.settings.mods.enabled != before_enabled
+            || self.settings.mods.disabled != before_disabled
+            || self.settings.mods.keys != before_keys
+            || extras_changed;
+        if !changed {
             return;
         }
-        let off: Vec<&str> = self
-            .settings
-            .mods
-            .disabled
-            .iter()
-            .map(String::as_str)
-            .collect();
-        let line = if off.is_empty() {
-            "Volt: all mods are on.".to_owned()
-        } else {
-            format!("Volt: {} mod(s) off: {}.", off.len(), off.join(", "))
-        };
-        log::info!("{line} (from {})", dir.display());
+        let line = "Volt: mod switches and runtime settings reloaded.".to_owned();
+        log::info!(
+            "{line} ({} enabled IDs, {} disabled IDs; from {})",
+            self.settings.mods.enabled.len(),
+            self.settings.mods.disabled.len(),
+            dir.display()
+        );
         if announce {
             self.system_message(horizon_client::text::Text::literal(line));
         }
     }
-    /// Once every two seconds: if `horizon-mods.txt` in the game home was
-    /// rewritten by anyone, apply it — independent of the launcher's note.
+    /// Once every two seconds: if `horizon-mods.txt` was created, rewritten
+    /// or removed by any writer, apply it — independent of the launcher's note.
     fn watch_mods_file(&mut self) {
         let now = std::time::Instant::now();
         if self
@@ -197,16 +221,14 @@ impl Game<'_> {
         let stamp = std::fs::metadata(dir.join("horizon-mods.txt"))
             .and_then(|m| m.modified())
             .ok();
-        if self.mods_file_stamp == stamp {
+        if !super::mods::mods_file_stamp_changed(&self.mods_file_stamp, &stamp) {
             return;
         }
-        let first = self.mods_file_stamp.is_none() && stamp.is_some();
         self.mods_file_stamp = stamp;
-        // The first sighting is the file the startup load already read:
-        // record it quietly; afterwards every change applies and is said.
-        if !first {
-            self.reload_mod_switches(&dir, true);
-        }
+        // Do not special-case the first Some: an older launcher, file manager,
+        // or other writer may create the file only after the game has started.
+        // Reloading an unchanged startup file is harmless; a new file must apply.
+        self.reload_mod_switches(&dir, true);
     }
     pub(super) fn android_custom_events(&mut self) {
         for (name, down) in self.pad.touch.key_events() {

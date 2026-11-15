@@ -1230,6 +1230,9 @@ struct DrawCtx<'a> {
     /// Live home-tab switch transition: (slide offset in dp, alpha multiplier).
     tab_anim: Option<(f32, f32)>,
     preview_rect: &'a mut Option<[f32; 4]>,
+    /// Width of the visible window in control-local coordinates. Right-side
+    /// home controls and their targets anchor here before the shared offset.
+    surface_right: f32,
 }
 
 impl DrawCtx<'_> {
@@ -1605,7 +1608,7 @@ impl DrawCtx<'_> {
         let (name, badge) = account_status.split_once(" • ").map(|(n,b)| (n.to_owned(), b.to_owned())).unwrap_or_else(|| (account_status.to_owned(), "Offline".to_owned()));
         let chip_h = 44.0;
         let chip_w = (ui.measure(Face::LauncherMedium, 13.5, &name) + chip_h + 26.0).min(w * 0.30).max(132.0);
-        let chip = [ax + w - m - chip_w, ay + m, chip_w, chip_h];
+        let chip = [ax + self.surface_right - m - chip_w, ay + m, chip_w, chip_h];
         ui.rounded(chip[0], chip[1], chip[2], chip[3], chip_h * 0.5, theme::GLASS());
         ui.border(chip[0], chip[1], chip[2], chip[3], chip_h * 0.5, theme::GLASS_BORDER());
         // Skin head avatar (small dark glass square with initial fallback, will show skin texture when available)
@@ -1710,9 +1713,9 @@ impl DrawCtx<'_> {
         draw_discord_icon(ui, help[0] + fab * 0.5, help[1] + fab * 0.5, theme::TEXT(), theme::GLASS());
         self.targets.push((help, Action::Discord));
 
-        // ---- Right rail: distinct destinations, aligned flush with the far edge ----
+        // ---- Right rail: distinct destinations, with the same 8 dp screen inset as the left rail ----
         let r_rail_w = 88.0;
-        let r_rail_x = ax + w - r_rail_w;
+        let r_rail_x = ax + self.surface_right - 8.0 - r_rail_w;
         let r_rail_y = ay + 12.0;
         let r_rail_h = (h - 24.0).max(0.0);
         ui.rounded(r_rail_x, r_rail_y, r_rail_w, r_rail_h, 18.0, theme::GLASS());
@@ -1802,9 +1805,10 @@ impl DrawCtx<'_> {
             (None, Action::Discord),
             (Some(Page::Settings), Action::Page(Page::Settings)),
         ];
+        let right = ax + self.surface_right;
         for (i, (page, action)) in squares.iter().enumerate() {
-            // Flush to the screen's right edge, where the rail below joins.
-            let rect = [ax + w - (squares.len() - i) as f32 * (sq + 8.0) + 8.0, ay + m, sq, sq];
+            // Keep the right edge aligned with the left cards' flush screen edge.
+            let rect = [right - (squares.len() - i) as f32 * (sq + 8.0) + 8.0, ay + m, sq, sq];
             ui.rounded(rect[0], rect[1], rect[2], rect[3], 10.0, theme::GLASS());
             ui.border(rect[0], rect[1], rect[2], rect[3], 10.0, theme::GLASS_BORDER());
             if let Some(page) = page {
@@ -1883,8 +1887,8 @@ impl DrawCtx<'_> {
         }
 
         // ---- Right rail: the quieter destinations as small chips, on a
-        // glass rail that runs flush to the screen edge and joins the
-        // top icon row with no gap, so the two bars read as one piece.
+        // glass rail aligned flush with the left destination cards.
+        // The top icon row and chip rail share that right edge.
         let chips: [(&str, u8, Action); 8] = [
             ("Worlds", 0, Action::HomeTab(HomeTab::Worlds)),
             ("Servers", 1, Action::HomeTab(HomeTab::Multiplayer)),
@@ -1898,7 +1902,7 @@ impl DrawCtx<'_> {
         let chip_w = 96.0;
         let chip_h = 27.0;
         let rail_w = chip_w + 14.0;
-        let rail_x = ax + w - rail_w;
+        let rail_x = ax + self.surface_right - rail_w;
         let chip_x = rail_x + 7.0;
         let mut chip_y = ay + m + sq + 8.0;
         let shown = chips
@@ -6403,6 +6407,10 @@ impl Launcher {
             }
         }
         let (w, h) = (ui.w, ui.h);
+        // Controls are drawn in visible-area coordinates, then translated by
+        // `offset`. The visible width already accounts for both insets, which
+        // need not be symmetric (for example, a side cutout or transient bar).
+        let visible_right = w;
         ui.cursor = (self.cursor.0 as f32 / ui.density - offset[0],
                      self.cursor.1 as f32 / ui.density - offset[1]);
 
@@ -6444,6 +6452,7 @@ impl Launcher {
                     })
                 }),
                 preview_rect: &mut self.preview_rect,
+                surface_right: visible_right,
             };
             content_area = if lobby {
                 [0.0, 0.0, w, h]
