@@ -836,6 +836,20 @@ fn login_and_configure(
             features: sync.features.clone(),
         }),
     )?;
+    // The mod-message announcement comes before anything is asked of the
+    // client (horizon_protocol::mod_net): a vanilla client ignores the
+    // unknown payload, a Horizon client answers it with an empty hello and
+    // is known by the time SelectKnownPacks returns. The client no longer
+    // volunteers that hello unasked - public servers' anti-bot plugins
+    // fingerprint unexpected configuration payloads and fail their captcha
+    // flows - so the server must speak first.
+    send(
+        c,
+        cfg::Clientbound::CustomPayload(cfg::CustomPayload {
+            channel: horizon_protocol::mod_net::CHANNEL.into(),
+            data: Vec::new(),
+        }),
+    )?;
     let core = KnownPack {
         namespace: CORE_PACK.0.into(),
         id: CORE_PACK.1.into(),
@@ -888,20 +902,14 @@ fn login_and_configure(
         return Ok(None);
     }
     // A Horizon client hears that this server runs its mods' quiet commands
-    // (horizon_protocol::quiet); a vanilla one is told nothing.
+    // (horizon_protocol::quiet); a vanilla one is told nothing. The mod-net
+    // announcement already went out before SelectKnownPacks - repeating it
+    // would draw a second hello from the client.
     if is_horizon {
         send(
             c,
             cfg::Clientbound::CustomPayload(cfg::CustomPayload {
                 channel: horizon_protocol::quiet::CHANNEL.into(),
-                data: Vec::new(),
-            }),
-        )?;
-        // And that it carries native mods' messages (horizon_protocol::mod_net).
-        send(
-            c,
-            cfg::Clientbound::CustomPayload(cfg::CustomPayload {
-                channel: horizon_protocol::mod_net::CHANNEL.into(),
                 data: Vec::new(),
             }),
         )?;
