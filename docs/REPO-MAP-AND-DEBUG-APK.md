@@ -219,3 +219,8 @@ through check-run annotations (`gh api repos/.../actions/runs/<id>/jobs`, then
   left rail is the natural next step.
 - Shader download success against the live registry is still unproven; only the
   failure path is now guaranteed to be visible.
+
+PR #5's own check suite (`43720770524`) finished all-green: source, engine
+tables, worldgen tests, runtime proof, native weave on all four ABIs, every APK
+build; `Publish GitHub Release` = skipped (no pre-release, nothing published from
+a session branch). The `docs/`+memory commits after it only touch this file.
