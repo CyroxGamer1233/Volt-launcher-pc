@@ -7563,14 +7563,15 @@ impl Launcher {
             Some(Action::LoginLink) => self.login.open_link(),
             Some(Action::HomeTab(tab)) => {
                 // The rail is always reachable, including from the catalog
-                // pages: a destination tap returns to Home on that tab.
-                if self.catalog.page != Page::Play {
-                    self.catalog.page = Page::Play;
-                    self.catalog.detail_index = None;
-                    self.catalog.editing = None;
-                    self.home_tab = HomeTab::Overview;
-                }
-                if self.catalog.page == Page::Play && tab != self.home_tab {
+                // pages: a destination tap returns to Home on that tab. The
+                // slide is animated only between two secondary tabs - landing
+                // on Overview never fades, so a rail tap always ends on the
+                // tab that was tapped.
+                let from_catalog = self.catalog.page != Page::Play;
+                self.catalog.page = Page::Play;
+                self.catalog.detail_index = None;
+                self.catalog.editing = None;
+                if tab != HomeTab::Overview && !from_catalog && tab != self.home_tab {
                     let order = |t: HomeTab| match t {
                         HomeTab::Overview => 0,
                         HomeTab::Worlds => 2,
