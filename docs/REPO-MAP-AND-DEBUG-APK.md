@@ -198,3 +198,24 @@ Three non-vanilla behaviours in the join fingerprint; all three also existed on
 3. `game/remote.rs` — the SkinsRestorer `/skin` command no longer fires the
    instant the command tree arrives (auth plugins punish that as bot behaviour);
    it waits 3 s and the player's own movement input (`pending_skin_cmd`).
+
+### Verification log
+| run | result |
+| --- | --- |
+| `43714386104` | weave failed: `Option<[f32;3]>` mismatch, private `progress` |
+| `43715560533` | all four ABIs + APKs green, release skipped |
+| `43718256658` | same, after the rail-tap fix: green (PR #5) |
+
+PR **#5** (`arena/8fa03d72-volt-launcher` → `android`). Compile errors surface
+through check-run annotations (`gh api repos/.../actions/runs/<id>/jobs`, then
+`check-runs/<job_id>/annotations`), not through logs, which are blocked here.
+
+### Known gaps after this pass
+- The **classic (non-Liquid) lobby** still has its own top-right icon squares and
+  bottom bar, so it only gets part of the new layout. Liquid Glass is the shipped
+  theme; the classic fixes are limited to the derived-height left rail.
+- The new dashboard has **no Discord control**; Discord remains reachable from the
+  classic lobby's icon row and Utilities page. Adding it to the Liquid shell's
+  left rail is the natural next step.
+- Shader download success against the live registry is still unproven; only the
+  failure path is now guaranteed to be visible.
