@@ -80,9 +80,14 @@ impl Game<'_> {
         match result {
             Ok((m, labels)) => {
                 log::info!(
-                    "shader pack {} {}: {} in {} ms",
+                    "shader pack {} {}{}: {} in {} ms",
                     m.id,
                     m.version,
+                    if m.compat {
+                        " (compatibility mode: stages this build can't serve are skipped)"
+                    } else {
+                        ""
+                    },
                     labels.join(", "),
                     now.elapsed().as_millis()
                 );

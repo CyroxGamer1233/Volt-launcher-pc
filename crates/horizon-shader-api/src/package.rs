@@ -104,14 +104,20 @@ impl Pack {
             let size = bytes.len() as u64;
             total += size;
             let max = if name.ends_with(".wgsl") {
-                if !used.contains(&name.as_str()) {
+                if !used.contains(&name.as_str()) && !manifest.compat {
                     return Err(format!("{name} is not used by any stage or in shared"));
                 }
-                if std::str::from_utf8(bytes).is_err() {
+                if used.contains(&name.as_str()) && std::str::from_utf8(bytes).is_err() {
                     return Err(format!("{name}: not UTF-8"));
                 }
                 MAX_WGSL
             } else if name == MANIFEST || EXTRAS.contains(&name.as_str()) {
+                MAX_OTHER
+            } else if manifest.compat {
+                // A pack read in compatibility mode carries files for the
+                // stages this build doesn't serve (textures, the WGSL of a
+                // vertex or shadow pass). They are data this build never
+                // opens; only their size counts against the pack's budget.
                 MAX_OTHER
             } else {
                 return Err(format!(

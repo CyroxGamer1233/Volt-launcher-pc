@@ -256,10 +256,25 @@ pub fn compose(pack: &Pack, kind: StageKind, file: &str) -> Composed {
             .push((name.to_owned(), start..composed.text.len()));
     };
     push("<prelude>", &kind.prelude());
-    for shared in pack.manifest.shared.iter().filter(|s| *s != file) {
-        push(shared, pack.source(shared).unwrap_or_default());
+    // The shared files, then the stage's own extra files, then its file.
+    let m = &pack.manifest;
+    let stage = match kind {
+        StageKind::Sky => m.sky.as_ref(),
+        StageKind::Material => m.material.as_ref(),
+        StageKind::Post => m.post.iter().find(|s| s.file == file),
+    };
+    let extras = stage.into_iter().flat_map(|s| s.files.iter());
+    let extras = extras.filter(|e| e.as_str() != file && !m.shared.contains(*e));
+    for name in m
+        .shared
+        .iter()
+        .filter(|s| *s != file)
+        .chain(extras)
+        .map(String::as_str)
+        .chain(Some(file))
+    {
+        push(name, pack.source(name).unwrap_or_default());
     }
-    push(file, pack.source(file).unwrap_or_default());
     push("<entries>", kind.entries());
     composed
 }

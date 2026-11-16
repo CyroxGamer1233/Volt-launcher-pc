@@ -103,6 +103,28 @@ fn check_with_options(pack: &Pack, translate_backends: bool) -> Result<Report, V
             Err(p) => problems.extend(p),
         }
     }
+    if m.compat {
+        // A pack read in compatibility mode (written for a newer API line)
+        // keeps the stages whose WGSL compiles against this build's prelude
+        // and drops the rest, so it installs and renders what it can. It
+        // fails only when nothing at all can run.
+        if checked.is_empty() {
+            problems.push(problem(
+                crate::MANIFEST,
+                format!(
+                    "written for a newer build of shader API {}; none of its stages \
+                     compiles against the API this Horizon serves ({})",
+                    m.api,
+                    crate::API
+                ),
+            ));
+            return Err(problems);
+        }
+        // The unused-option rule is skipped too: options may belong to the
+        // dropped stages. The renderer passes each stage only the constants
+        // its module declares.
+        return Ok(Report { stages: checked });
+    }
     if problems.is_empty() {
         for option in &m.options {
             let used = checked.iter().any(|c| {

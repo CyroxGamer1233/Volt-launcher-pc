@@ -352,11 +352,24 @@ pub struct Catalog {
     icon_rx: mpsc::Receiver<(String, Option<(u64, Vec<u8>)>)>,
     worker: Option<mpsc::Receiver<Result<Reply, String>>>,
     search_worker: Option<mpsc::Receiver<Result<Vec<Project>, String>>>,
+    /// A catalog entry's own page: About, screenshots, Download.
+    pub detail: Option<DetailView>,
+    detail_rx: Option<mpsc::Receiver<Result<browser::details::Details, String>>>,
     searches: crate::search_queue::Queue<
         (Page, crate::shader_catalog::Origin, String, usize),
         Vec<Project>,
     >,
 }
+/// One catalog entry opened as its own page.
+pub struct DetailView {
+    /// Where the entry sat in `results` when it was opened (for Install).
+    pub index: usize,
+    pub project: Project,
+    /// None while the page is still loading.
+    pub details: Option<browser::details::Details>,
+    pub error: Option<String>,
+}
+
 #[derive(Clone)]
 pub struct LocalItem {
     pub kind: horizon_client::content_files::Kind,
@@ -420,6 +433,8 @@ impl Catalog {
             icon_rx,
             worker: None,
             search_worker: None,
+            detail: None,
+            detail_rx: None,
             searches: crate::search_queue::Queue::new(),
         };
         result.refresh(home);
@@ -644,6 +659,20 @@ impl Catalog {
             }
             self.refresh(home);
         }
+        let detail_reply = self.detail_rx.as_ref().and_then(|rx| match rx.try_recv() {
+            Ok(v) => Some(v),
+            Err(mpsc::TryRecvError::Disconnected) => Some(Err("Detail fetch stopped".into())),
+            Err(_) => None,
+        });
+        if let Some(reply) = detail_reply {
+            self.detail_rx = None;
+            if let Some(view) = &mut self.detail {
+                match reply {
+                    Ok(details) => view.details = Some(details),
+                    Err(error) => view.error = Some(error),
+                }
+            }
+        }
         while let Ok((url, decoded)) = self.icon_rx.try_recv() {
             self.icon_pending.remove(&url);
             let entry = decoded.map(|(hash, rgba)| ProjectIcon {
@@ -679,6 +708,43 @@ impl Catalog {
     pub fn search(&mut self, home: &Path) {
         self.append_next = false;
         self.request_search(home, true);
+    }
+    /// Open a catalog entry's own page and fetch its body and gallery
+    /// off-thread (registry index or Modrinth's project endpoint).
+    pub fn open_detail(&mut self, index: usize) {
+        let Some(project) = self.results.get(index).cloned() else {
+            return;
+        };
+        self.scroll = 0.0;
+        self.detail = Some(DetailView {
+            index,
+            project: project.clone(),
+            details: None,
+            error: None,
+        });
+        let (tx, rx) = mpsc::channel();
+        self.detail_rx = Some(rx);
+        std::thread::Builder::new()
+            .name("volt-detail".into())
+            .spawn(move || {
+                let result = (|| {
+                    let source: Box<dyn Source> =
+                        if project.source == browser::SourceId::CurseForge {
+                            Box::new(browser::curseforge::CurseForge::volt())
+                        } else {
+                            browser::source(project.source).ok_or("Unsupported source")?
+                        };
+                    source.details(&project)
+                })();
+                let _ = tx.send(result);
+            })
+            .ok();
+    }
+    pub fn close_detail(&mut self) {
+        if self.detail.take().is_some() {
+            self.scroll = 0.0;
+        }
+        self.detail_rx = None;
     }
     /// Whether the continuous grid may fetch another page: the last fetch
     /// filled its page (so more may exist) and nothing is in flight.

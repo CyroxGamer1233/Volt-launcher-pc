@@ -40,6 +40,70 @@ pub struct NativeFrame {
     pub group: wgpu::BindGroup,
     start: std::time::Instant,
     frames: u32,
+    motion: FrameMotion,
+}
+
+/// What the frame's between-frames fields remember: when the last frame was
+/// written, where the camera stood and what it projected, and the eased
+/// values (wetness, smoothed eye light, in-water and in-lava fades). After a
+/// gap of over half a second (a pause, a world load) the motion fields reset,
+/// as docs/api/shaders-reference.md promises.
+#[derive(Default)]
+struct FrameMotion {
+    last: Option<std::time::Instant>,
+    previous_view_projection: [[f32; 4]; 4],
+    previous_camera: glam::DVec3,
+    wetness: f32,
+    eye_light_smooth: [f32; 2],
+    in_water: f32,
+    in_lava: f32,
+}
+
+impl FrameMotion {
+    /// Overwrites the stateful fields of this frame's `inputs`, whose static
+    /// fields `frame_inputs` already filled with this frame's own values.
+    fn apply(&mut self, inputs: &mut FrameInputs, camera: glam::DVec3) {
+        let now = std::time::Instant::now();
+        let dt = self
+            .last
+            .map_or(0.0, |t| now.duration_since(t).as_secs_f32());
+        // The first frame, and any gap last frame's camera says nothing about.
+        let fresh = !(0.0..=0.5).contains(&dt) || self.last.is_none();
+        // This frame's view-projection, which `frame_inputs` put there.
+        let current_vp = inputs.previous_view_projection;
+        if !fresh {
+            inputs.delta_time = dt;
+            inputs.previous_view_projection = self.previous_view_projection;
+            inputs.camera_motion = (camera - self.previous_camera).as_vec3().to_array();
+        }
+        // An eased value covers this fraction of its way to the target per
+        // write; on a fresh frame it snaps there.
+        let ease = |half_life: f32| {
+            if fresh {
+                1.0
+            } else {
+                1.0 - 0.5f32.powf(dt / half_life)
+            }
+        };
+        let toward = |from: &mut f32, to: f32, half_life: f32| {
+            *from += (to - *from) * ease(half_life);
+        };
+        // Wetness rises over about 30 seconds and dries over about 10.
+        let half = if inputs.rain > self.wetness { 6.0 } else { 2.0 };
+        toward(&mut self.wetness, inputs.rain, half);
+        for i in 0..2 {
+            toward(&mut self.eye_light_smooth[i], inputs.eye_light[i], 2.0);
+        }
+        toward(&mut self.in_water, f32::from(u8::from(inputs.eye_in == 1)), 0.25);
+        toward(&mut self.in_lava, f32::from(u8::from(inputs.eye_in == 2)), 0.25);
+        inputs.wetness = self.wetness;
+        inputs.eye_light_smooth = self.eye_light_smooth;
+        inputs.in_water = self.in_water;
+        inputs.in_lava = self.in_lava;
+        self.last = Some(now);
+        self.previous_view_projection = current_vp;
+        self.previous_camera = camera;
+    }
 }
 
 /// The uniform `frame` at binding 0, read by `visibility`.
@@ -114,6 +178,7 @@ impl NativeFrame {
             group,
             start: std::time::Instant::now(),
             frames: 0,
+            motion: FrameMotion::default(),
         }
     }
 
@@ -129,7 +194,8 @@ impl NativeFrame {
     /// Writes this frame's inputs, for a world of `size`.
     pub fn write(&mut self, queue: &wgpu::Queue, frame: &Frame, size: [u32; 2]) {
         let seconds = self.start.elapsed().as_secs_f32() % 3600.0;
-        let inputs = frame_inputs(frame, size, seconds, self.frames);
+        let mut inputs = frame_inputs(frame, size, seconds, self.frames);
+        self.motion.apply(&mut inputs, frame.camera);
         self.frames = self.frames.wrapping_add(1);
         queue.write_buffer(&self.buffer, 0, bytemuck::bytes_of(&inputs));
     }
@@ -459,6 +525,50 @@ pub fn frame_inputs(frame: &Frame, size: [u32; 2], seconds: f32, index: u32) -> 
         },
         frame_index: index,
         hide_gui: u32::from(pack.hide_gui),
+        precipitation: pack.biome_precipitation.max(0) as u32,
+        temperature: pack.temperature,
+        downfall: pack.rainfall,
+        // The stateful fields below hold this frame's own values; the caller
+        // refines them from what it remembers (`FrameMotion::apply`).
+        wetness: pack.rain,
+        previous_view_projection: m(projection * view),
+        camera_motion: [0.0; 3],
+        delta_time: 0.0,
+        eye_light_smooth: [level(pack.eye_light[0]), level(pack.eye_light[1])],
+        in_water: f32::from(u8::from(pack.eye_in == 1)),
+        in_lava: f32::from(u8::from(pack.eye_in == 2)),
+        // No reflection, shadow or ray-tracing pass on this build: the flags
+        // say so, and a pack takes its fallback paths.
+        water_plane: 0.0,
+        has_reflection: 0,
+        reflection_resolution: [(size[0] / 2) as f32, (size[1] / 2) as f32],
+        mods: [[0.0; 4]; 8],
+        light_direction: if body(frame.sky.sun_angle).y >= 0.0 {
+            body(frame.sky.sun_angle).to_array()
+        } else {
+            body(frame.sky.moon_angle).to_array()
+        },
+        has_shadow: 0,
+        shadow_view_proj: m(Mat4::IDENTITY),
+        shadow_distance: 0.0,
+        shadow_distortion: 0.0,
+        shadow_resolution: 0.0,
+        shadow_center_texel: 0.0,
+        // SDR output with BT.709 primaries.
+        hdr: 0,
+        headroom: 1.0,
+        paper_white: 80.0,
+        peak: 80.0,
+        black_level: 0.0,
+        primaries: 0,
+        has_ray_tracing: 0,
+        ray_distance: 0.0,
+        luminance: [0.2126, 0.7152, 0.0722],
+        // Never 0, and constant: this build keeps no cleared resources.
+        view_epoch: 1,
+        world_epoch: 1,
+        reset_reasons: 0,
+        padding: [0; 2],
     }
 }
 

@@ -134,6 +134,40 @@ The frame, as `frame` in every stage. Positions and directions are in world axes
 | `dimension` | `i32` | 388 | 0 the Overworld, -1 the Nether, 1 the End, 2 any other dimension. |
 | `frame_index` | `u32` | 392 | Frames drawn since the pack was loaded (wraps). |
 | `hide_gui` | `u32` | 396 | 1 while F1 hides the HUD, else 0. |
+| `precipitation` | `u32` | 400 | What falls in the biome at the camera while it rains: 0 nothing, 1 rain, 2 snow. |
+| `temperature` | `f32` | 404 | The biome at the camera's temperature (vanilla's, -0.7..2.0; it snows below 0.15). |
+| `downfall` | `f32` | 408 | The biome at the camera's downfall, 0..1. |
+| `wetness` | `f32` | 412 | `rain`, smoothed: rises over about 30 seconds and dries over about 10, 0..1. |
+| `previous_view_projection` | `mat4x4<f32>` | 416 | Last frame's camera-relative world to clip space (its `projection * view`); a point at camera-relative `p` now was at `p + camera_motion` relative to last frame's camera. This frame's on the first frame and after a gap of over half a second (a pause, a world load), when last frame's camera says nothing about this one. |
+| `camera_motion` | `vec3<f32>` | 480 | How far the camera moved since last frame, in blocks (0 after such a gap). |
+| `delta_time` | `f32` | 492 | Seconds since last frame (0 on the first and after such a gap). |
+| `eye_light_smooth` | `vec2<f32>` | 496 | `eye_light` eased with a half-life of 2 seconds: it follows the light levels' steps without stepping itself (for exposure and indoor fog). |
+| `in_water` | `f32` | 504 | 1 while the camera is in water (`eye_in` 1), eased with a half-life of a quarter second in and out. |
+| `in_lava` | `f32` | 508 | The same for lava (`eye_in` 2). |
+| `water_plane` | `f32` | 512 | The y of the horizontal water plane `reflection` mirrors the world about, in world blocks, while `has_reflection` is 1; this build serves no reflection pass, so 0. |
+| `has_reflection` | `u32` | 516 | 1 while a reflection texture holds this frame's water mirror, else 0; always 0 on this build (no reflection pass), so a pack takes its no-reflection path. |
+| `reflection_resolution` | `vec2<f32>` | 520 | The size a reflection texture would have, in pixels: half the world's picture. |
+| `mods` | `array<vec4<f32>, 8>` | 528 | Eight values a native mod hands its own pack each frame: what they mean is that mod's. All 0 when no mod sets them. |
+| `light_direction` | `vec3<f32>` | 656 | Unit vector toward the body casting this frame's light: the sun by day, the moon by night. |
+| `has_shadow` | `u32` | 668 | 1 while a shadow map holds this frame's shadows, else 0; always 0 on this build (no shadow pass), so a pack takes its no-shadow path. |
+| `shadow_view_proj` | `mat4x4<f32>` | 672 | Camera-relative world to the shadow camera's clip space while `has_shadow` is 1; the identity on this build. |
+| `shadow_distance` | `f32` | 736 | Half the side of the square a shadow map would cover, in blocks; 0 without one. |
+| `shadow_distortion` | `f32` | 740 | How strongly a shadow map is distorted toward its centre, 0..1; 0 without one. |
+| `shadow_resolution` | `f32` | 744 | A shadow map's side, in texels; 0 without one. |
+| `shadow_center_texel` | `f32` | 748 | The ground one shadow texel covers at the map's centre, in blocks; 0 without one. |
+| `hdr` | `u32` | 752 | 1 while the output is HDR, else 0; 0 on this build (SDR output). |
+| `headroom` | `f32` | 756 | The peak over paper white: the brightest value the display shows. 1 in SDR. |
+| `paper_white` | `f32` | 760 | Paper white in nits; a nominal 80 in SDR. |
+| `peak` | `f32` | 764 | The peak brightness in nits; a nominal 80 in SDR, as `paper_white`. |
+| `black_level` | `f32` | 768 | The display's black in nits (HDR's Black Level); 0 in SDR. |
+| `primaries` | `u32` | 772 | The primaries of this pack's colours: 0 BT.709, 1 BT.2020; 0 on this build. |
+| `has_ray_tracing` | `u32` | 776 | 1 while ray queries read this frame's scene, else 0; always 0 on this build (no ray tracing), so every ray would miss. |
+| `ray_distance` | `f32` | 780 | How far from the camera along x and along z, in blocks, a traced scene is sure to reach; 0 while `has_ray_tracing` is 0. |
+| `luminance` | `vec3<f32>` | 784 | The weights that give a colour's luminance in those primaries, `dot(c, frame.luminance)`: (0.2126, 0.7152, 0.0722) for BT.709. |
+| `view_epoch` | `u32` | 796 | Changes when kept view resources are cleared and is never 0; constant 1 on this build (no kept resources). |
+| `world_epoch` | `u32` | 800 | The same for kept world resources; constant 1 on this build. |
+| `reset_reasons` | `u32` | 804 | Why an epoch changed this frame; 0 when neither did (always, on this build). |
+| `padding` | `vec2<u32>` | 808 | Pads the struct to a multiple of 16 bytes; always 0. |
 
 ## Options
 
