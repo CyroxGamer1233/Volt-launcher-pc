@@ -8105,6 +8105,23 @@ impl Launcher {
                         self.catalog.status = format!("Could not save the mod list: {e}");
                         return Ok(());
                     }
+                    // The in-game checks read the engine flags as well as the
+                    // catalog (`flag || catalog.is_on(..)`), and the catalog is
+                    // what options.txt keeps. Write it here too, or turning a
+                    // Woven mod off in the launcher left its engine flag on and
+                    // the mod kept running in game.
+                    if let Some(vmod) = horizon_client::volt_mods::VoltModId::from_slug(id) {
+                        let path = game_dir.join("options.txt");
+                        let mut settings = horizon_client::settings::Settings::load(&path);
+                        horizon_client::volt_mods::apply_mod_to_engine(
+                            vmod,
+                            enable,
+                            &mut settings.extras,
+                            &mut settings.horizon,
+                        );
+                        settings.save(&path);
+                        self.catalog.extras = settings.extras.clone();
+                    }
                     self.catalog.bundled_disabled = on.disabled.clone();
                     crate::documents::note_mods_changed(&game_dir);
                     self.catalog.status = if enable {

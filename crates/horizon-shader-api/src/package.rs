@@ -13,6 +13,9 @@ pub const EXTENSION: &str = "hshader";
 /// Bytes per WGSL file, per other file, and in all.
 pub const MAX_WGSL: u64 = 256 << 10;
 const MAX_OTHER: u64 = 1 << 20;
+/// Bytes per image in `[[textures]]`. A 2048² RGBA PNG is well under this;
+/// several of them still fit `MAX_TOTAL`.
+const MAX_TEXTURE: u64 = 2 << 20;
 pub const MAX_TOTAL: u64 = 8 << 20;
 /// Files in a `.hshader`.
 const MAX_ENTRIES: usize = 512;
@@ -24,6 +27,14 @@ const EXTRAS: [&str; 5] = [
     "LICENSE.txt",
     "icon.png",
 ];
+
+/// An image format a `[[textures]]` entry may name.
+pub fn is_texture(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    [".png", ".jpg", ".tga", ".basn"]
+        .iter()
+        .any(|ext| lower.ends_with(ext))
+}
 
 /// A pack read from a folder or a `.hshader`: its manifest and every file,
 /// by path from the pack's root (`/`-separated).
@@ -111,11 +122,17 @@ impl Pack {
                     return Err(format!("{name}: not UTF-8"));
                 }
                 MAX_WGSL
+            } else if is_texture(name) && used.contains(&name.as_str()) {
+                // Checked before `EXTRAS`, whose `icon.png` is also allowed
+                // unnamed below: a `[[textures]]` image is only allowed when
+                // the manifest names it, so this is not a hole for arbitrary
+                // files.
+                MAX_TEXTURE
             } else if name == MANIFEST || EXTRAS.contains(&name.as_str()) {
                 MAX_OTHER
             } else {
                 return Err(format!(
-                    "{name}: a pack holds only {MANIFEST}, .wgsl files and {}",
+                    "{name}: a pack holds only {MANIFEST}, the .wgsl files it names, the images its [[textures]] name, and {}",
                     EXTRAS.join(", ")
                 ));
             };

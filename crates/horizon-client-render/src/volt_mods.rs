@@ -1818,6 +1818,22 @@ pub fn apply_mod_to_engine(id: VoltModId, on: bool, extras: &mut Extras, horizon
     }
 }
 
+/// `apply_mod_to_engine` for every mod: the engine flags follow `mod_catalog`.
+///
+/// The launcher's Mods tab only has the catalog to write (`options.txt`'s
+/// `voltMod.*` keys), while the in-game checks read both the catalog and a
+/// separate engine flag as `flag || catalog.is_on(..)`. With the flags left at
+/// their old value, a mod switched off in the launcher kept working in game -
+/// the reported "turned off in the launcher, still running in game". Running
+/// this right after `options.txt` is read makes the catalog the single
+/// authority, which also covers a hand-edited file.
+pub fn apply_engine_from_catalog(extras: &mut Extras, horizon: &mut Graphics) {
+    for id in VoltModId::ALL {
+        let on = extras.mod_catalog.is_on(id);
+        apply_mod_to_engine(id, on, extras, horizon);
+    }
+}
+
 /// Pulls any direct edits made in `Volt Settings` or `Video Settings` back into `mod_catalog`.
 pub fn sync_catalog_from_engine(extras: &mut Extras, horizon: &Graphics) {
     extras

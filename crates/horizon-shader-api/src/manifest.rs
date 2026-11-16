@@ -41,6 +41,14 @@ pub struct Manifest {
     /// Empty: one page with every option.
     pub pages: Vec<OptionPage>,
     pub budget: Budget,
+    /// WGSL files the pack ships for stages this API line does not draw yet
+    /// (`[vertex]`, `[weather]`, `[shadow]`, `[reflection]`, `[[materials]]`,
+    /// `[[textures]]`). Carried so the pack installs whole and a newer API can
+    /// draw them; not run here.
+    pub extra_stages: Vec<String>,
+    /// Option ids driven by `[shadow]` and `[reflection]` rather than by a
+    /// compiled stage's `override`. `check` counts them as used.
+    pub extra_options: Vec<String>,
 }
 
 /// One stage: the WGSL file that defines its function.
@@ -54,6 +62,12 @@ pub struct Manifest {
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 pub struct Stage {
     pub file: String,
+    /// More WGSL this stage compiles beside `file`, for a pack that keeps its
+    /// lighting and water passes in files of their own (Daybreak, Volexstorm,
+    /// Pastel Mystic do). Without this the pack was refused as shipping files
+    /// "not used by any stage or in shared".
+    #[serde(default)]
+    pub files: Vec<String>,
     /// Shown in the GPU time overlay; the file name when absent.
     #[serde(default)]
     pub name: Option<String>,
@@ -94,8 +108,14 @@ pub struct Budget {
     pub gpu_ms: Option<f32>,
 }
 
+// Tolerant at the top level too, like `Stage` and `RawOption` below: the
+// registry's real shader packs declare whole tables this API does not read
+// yet (`[vertex]`, `[weather]`, `[shadow]`, `[reflection]`, `[[materials]]`,
+// `[[lights]]`) and put extra keys inside the ones it does (`fog` in
+// `[material]`, `output`/`scale` in `[[post]]`). With `deny_unknown_fields`
+// here every one of those packs failed to install with
+// "unknown field `vertex`", so no shader could be downloaded at all.
 #[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
 struct Raw {
     schema: u32,
     id: String,
@@ -123,6 +143,75 @@ struct Raw {
     pages: Vec<RawPage>,
     #[serde(default)]
     budget: RawBudget,
+    /// Stages published packs declare that this API line does not draw yet.
+    /// They are read only so their WGSL counts as used: a pack that ships
+    /// `vertex.wgsl` or `weather.wgsl` used to be refused with "not used by
+    /// any stage", which blocked every real pack in the registry.
+    #[serde(default)]
+    vertex: Option<RawFileStage>,
+    #[serde(default)]
+    weather: Option<RawFileStage>,
+    #[serde(default)]
+    shadow: Option<RawShadow>,
+    #[serde(default)]
+    reflection: Option<RawReflection>,
+    #[serde(default)]
+    materials: Vec<RawFileStage>,
+    /// `[[textures]]`: images stages sample this API line does not bind yet.
+    /// Their files are carried so a pack that ships them installs whole.
+    #[serde(default)]
+    textures: Vec<RawFileStage>,
+    /// Metadata tables with no files of their own: `[[particle_lights]]`,
+    /// `[[tags]]`. Ignored, but not refused.
+    #[serde(default)]
+    particle_lights: Vec<toml::Value>,
+    #[serde(default)]
+    tags: Vec<toml::Value>,
+}
+
+/// `[shadow]`: the shadow map. This API line draws none, but the table names
+/// the options that drive one (`option`, `resolution_option`, `distance_option`),
+/// and those options must count as used or the pack fails its check with
+/// "option `shadow_resolution`: no stage declares" and cannot install.
+#[derive(Deserialize)]
+struct RawShadow {
+    #[serde(default)]
+    file: Option<String>,
+    #[serde(default)]
+    option: Option<String>,
+    #[serde(default)]
+    resolution_option: Option<String>,
+    #[serde(default)]
+    distance_option: Option<String>,
+}
+
+impl RawShadow {
+    /// The option ids this table drives.
+    fn options(&self) -> impl Iterator<Item = &String> {
+        [&self.option, &self.resolution_option, &self.distance_option]
+            .into_iter()
+            .flatten()
+    }
+}
+
+/// `[reflection]`: names the option that turns the reflection pass on.
+#[derive(Deserialize)]
+struct RawReflection {
+    #[serde(default)]
+    file: Option<String>,
+    #[serde(default)]
+    option: Option<String>,
+}
+
+/// A `[vertex]`/`[weather]`/`[[materials]]`/`[[textures]]` table.
+///
+/// Tolerant like `Stage`: only a `file` is of any use here, and most of these
+/// tables have none (`[reflection]` names an `option`, `[[materials]]` an `id`
+/// and its `sprites`), so requiring one would refuse the pack again.
+#[derive(Deserialize)]
+struct RawFileStage {
+    #[serde(default)]
+    file: Option<String>,
 }
 
 // Tolerant on purpose: an option key from a newer schema must not make a
@@ -207,7 +296,11 @@ impl Manifest {
             )));
         }
         let stages = raw.sky.iter().chain(&raw.material).chain(&raw.post);
-        for file in raw.shared.iter().chain(stages.map(|s| &s.file)) {
+        for file in raw
+            .shared
+            .iter()
+            .chain(stages.flat_map(|s| std::iter::once(&s.file).chain(&s.files)))
+        {
             if !crate::package::plain_path(file) || !file.ends_with(".wgsl") {
                 return Err(err(format!("{file:?} is not a plain path to a .wgsl file")));
             }
@@ -236,6 +329,28 @@ impl Manifest {
             }
             ms => ms.map(|ms| ms as f32),
         };
+        // Collected before the struct is built: these stages are not drawn
+        // yet, only kept so their files pass the package's "used" check.
+        let extra_stages: Vec<String> = raw
+            .vertex
+            .iter()
+            .chain(raw.weather.iter())
+            .filter_map(|s| s.file.clone())
+            .chain(raw.shadow.iter().filter_map(|s| s.file.clone()))
+            .chain(raw.reflection.iter().filter_map(|s| s.file.clone()))
+            .chain(raw.materials.iter().filter_map(|s| s.file.clone()))
+            .chain(raw.textures.iter().filter_map(|s| s.file.clone()))
+            .collect();
+        // The options a shadow or reflection pass drives: their `override`
+        // lives in WGSL this API line does not compile, so `check` would
+        // refuse the pack as declaring an option no stage uses.
+        let extra_options: Vec<String> = raw
+            .shadow
+            .iter()
+            .flat_map(RawShadow::options)
+            .chain(raw.reflection.iter().filter_map(|r| r.option.as_ref()))
+            .cloned()
+            .collect();
         Ok(Manifest {
             id: raw.id,
             name: raw.name,
@@ -251,6 +366,8 @@ impl Manifest {
             options,
             pages,
             budget: Budget { gpu_ms },
+            extra_stages,
+            extra_options,
         })
     }
 
@@ -258,7 +375,12 @@ impl Manifest {
     pub fn files(&self) -> Vec<&str> {
         let mut files: Vec<&str> = Vec::new();
         let stages = self.sky.iter().chain(&self.material).chain(&self.post);
-        for file in self.shared.iter().chain(stages.map(|s| &s.file)) {
+        for file in self
+            .shared
+            .iter()
+            .chain(stages.flat_map(|s| std::iter::once(&s.file).chain(&s.files)))
+            .chain(self.extra_stages.iter())
+        {
             if !files.contains(&file.as_str()) {
                 files.push(file);
             }

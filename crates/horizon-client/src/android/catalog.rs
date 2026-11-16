@@ -561,7 +561,11 @@ impl Catalog {
         self.bundled_disabled = on.disabled.clone();
         let settings = horizon_client::settings::Settings::load(&game.join("options.txt"));
         self.extras = settings.extras.clone();
-        horizon_client::volt_mods::sync_catalog_from_engine(&mut self.extras, &settings.horizon);
+        // Deliberately NOT `sync_catalog_from_engine` here: that copies the
+        // engine flags back over the catalog, and the engine flags in
+        // `options.txt` are only the ones a game run happened to write. The
+        // catalog is what the launcher's toggles write, so refreshing must
+        // trust it, or every refresh undid a mod the player switched off.
         horizon_threads::set_thread_boost(self.extras.thread_boost);
         self.local.clear();
         // What the game last reported per mod file (it writes the file at
