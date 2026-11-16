@@ -356,7 +356,7 @@ fn bundled_mod_blurb(id: &str) -> &'static str {
         "crosshair_indicator" => "The crosshair reacts when a target is within reach.",
         "hitbox_plus" => "Entity hitboxes with reach-aware colors and thickness.",
         "invisible_frames" => "Sneak-right-click a filled frame to hide and lock it.",
-        "freelook" => "Hold a key for a third-person camera you can look around in.",
+        "freelook" => "Orbit the camera around your player without turning. Hold the key, or tap the Look button on the touch HUD.",
         "worldedit" => "In-game WorldEdit: wand selections, //set, //copy and the other commands.",
         "horizonmatica" => "Litematica for Horizon: schematics as ghost blocks, a verifier and material lists.",
         "visuality_horizon" => "Small pixel particles: hit fragments, slime blobs, soul flames and more.",

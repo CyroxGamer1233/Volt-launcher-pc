@@ -88,12 +88,20 @@ pub fn throttle_reason(c: FrameContext) -> ThrottleReason {
 }
 
 /// `getFramerateLimit`.
+///
+/// Vanilla caps a menu to a flat 60 FPS whenever no level is loaded. That cap
+/// is wrong here: it ignores the player's Max Framerate, so a screen the player
+/// has not opened yet still drags a 90 or 120 FPS setting down to 60, and it
+/// makes the whole GUI feel sluggish on a phone that can drive more. The cap is
+/// therefore `option_limit.min(60)`: a player who chose 30 still gets 30, and a
+/// player who chose 120 keeps 120 in menus. Use the explicit
+/// `minimized`/AFK options to save power in menus.
 pub fn framerate_limit(option_limit: i32, c: FrameContext) -> i32 {
     match throttle_reason(c) {
         ThrottleReason::None => option_limit,
         ThrottleReason::WindowIconified | ThrottleReason::LongAfk => 10,
         ThrottleReason::ShortAfk => option_limit.min(30),
-        ThrottleReason::OutOfLevelMenu => 60,
+        ThrottleReason::OutOfLevelMenu => option_limit.min(60),
     }
 }
 
@@ -532,6 +540,40 @@ pub fn icon() -> Option<winit::window::Icon> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn menu_context() -> FrameContext {
+        FrameContext {
+            inactivity: InactivityFpsLimit::Minimized,
+            iconified: false,
+            focused: true,
+            exclusive_fullscreen: false,
+            now_ms: 1000,
+            latest_input_ms: 900,
+            has_level: false,
+            has_screen: true,
+            has_overlay: false,
+        }
+    }
+
+    /// A menu used to hard-cap at 60 FPS whatever Max Framerate said, so a
+    /// player with 90 or 120 set saw every GUI drop to 60.
+    #[test]
+    fn a_menu_keeps_the_players_framerate_up_to_sixty() {
+        assert_eq!(framerate_limit(120, menu_context()), 60);
+        assert_eq!(framerate_limit(240, menu_context()), 60);
+        assert_eq!(framerate_limit(60, menu_context()), 60);
+        // A player who asked for less must not be pushed up to 60.
+        assert_eq!(framerate_limit(30, menu_context()), 30);
+        assert_eq!(framerate_limit(10, menu_context()), 10);
+    }
+
+    /// The world itself is never throttled just because a menu is open.
+    #[test]
+    fn a_loaded_level_keeps_the_full_framerate() {
+        let mut c = menu_context();
+        c.has_level = true;
+        assert_eq!(framerate_limit(120, c), 120);
+    }
 
     #[test]
     fn video_mode_round_trips_the_options_json() {

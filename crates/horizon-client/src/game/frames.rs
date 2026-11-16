@@ -375,7 +375,10 @@ impl Game<'_> {
         let mut maps: Vec<(i32, glam::Mat4, u32)> = Vec::new();
         let mut items: Vec<(ItemStack, u32, glam::Mat4, u8)> = Vec::new();
         // ItemFrame.shouldRenderAtSqrDistance: 1024 blocks at a view scale
-        // of 1.
+        // of 1. Volt's Frame Items Loader drops the limit entirely: framed
+        // items are the one entity people build across a whole world, so
+        // they stay visible wherever they are.
+        let any_distance = self.settings.extras.volt_boost_plus.frame_items_loader;
         let range = 16.0 * 64.0 * self.view_scale();
         for f in &self.item_frames {
             let entity_start = out.len();
@@ -393,7 +396,7 @@ impl Game<'_> {
                     }
                 }
             }
-            if !self.entity_in_view(camera, (lo + hi) / 2.0, range, lo, hi) {
+            if !any_distance && !self.entity_in_view(camera, (lo + hi) / 2.0, range, lo, hi) {
                 continue;
             }
             let s = f.step();

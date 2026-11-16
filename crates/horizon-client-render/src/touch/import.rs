@@ -1131,7 +1131,7 @@ fn assemble_imported_settings(
     });
 
     // Hide duplicate built-in HUD buttons so only the imported Java layout appears.
-    settings.button_visibility = [2; 14];
+    settings.button_visibility = [2; 15];
     let has_joystick = if let Some((stick_place, forward_sprint, absolute_dpad)) = joystick {
         settings.button_visibility[Control::Move as usize] = 1;
         settings.sprint_with_joystick = forward_sprint;

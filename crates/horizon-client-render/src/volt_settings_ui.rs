@@ -461,7 +461,17 @@ fn tab_groups(s: &Settings) -> Vec<(VoltTab, Vec<(&'static str, Vec<VoltEntry>)>
             "One-tap mobile HUD layout presets: Pojav, Zalith, FCL, PvP Claw & Volt Default.",
         ),
         e_opt(Opt::TouchMode, None, "Touch aiming & interaction scheme."),
-        e_opt(Opt::TouchSensitivity, None, "Touch camera look sensitivity."),
+        e_opt(Opt::TouchSensitivity, None, "Touch camera look sensitivity for both axes together."),
+        e_opt(
+            Opt::TouchSensitivityHorizontal,
+            None,
+            "Left/right camera sensitivity on its own. Raise it to turn faster sideways without changing vertical aim.",
+        ),
+        e_opt(
+            Opt::TouchSensitivityVertical,
+            None,
+            "Up/down camera sensitivity on its own. Raise it to look up and down faster without changing horizontal aim.",
+        ),
         e_opt(Opt::TouchButtonScale, None, "Scale of on-screen touch action buttons."),
         e_opt(Opt::TouchCircleSize, None, "Size of the touch interaction circle."),
         e_opt(Opt::TouchAnalog, None, "Smooth 360-degree analog joystick movement."),

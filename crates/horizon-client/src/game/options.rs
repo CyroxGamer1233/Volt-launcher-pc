@@ -633,8 +633,10 @@ impl Game<'_> {
                 limit = limit.min(cap.min(15));
             } else if self.title.is_some() || self.screen != super::Screen::Playing {
                 // Menus stay smooth while they are being used; the idle cap
-                // only applies after ten seconds without any input.
-                if idle_ms > 10_000 {
+                // only applies after ten seconds without any input. Hiding the
+                // HUD (the touch GUI button) is not a menu, so it never drops
+                // to the idle cap: the world is still being drawn.
+                if !self.ui.hide_gui && idle_ms > 10_000 {
                     if cap < limit {
                         reason = "IDLE-MENU";
                     }

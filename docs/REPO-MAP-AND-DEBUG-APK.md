@@ -52,7 +52,7 @@ the phone (no Java runtime, no JVM, no Minecraft jar at play time).
 
 APK details: `--public` release profile = opt level 3 + ThinLTO, **non-debuggable**,
 paths remapped, agent-control socket off. `minSdk 28` (Android 9), `targetSdk 35`,
-`versionName 1.0.0`, versionCode = `280000 + run_number*2 + abi_offset`.
+`versionName 1.1.0`, versionCode = `280000 + run_number*2 + abi_offset`.
 The **debug channel** is a *separate app* (`ae.net.Voltlauncher.debug`, "Volt Debug")
 so it never overwrites a stable install.
 
@@ -298,3 +298,51 @@ out by reading: the login hello carries the correct offline UUID
 known-packs entry; chat answers go out as a plain `serverbound_chat_message`
 with `signature: None`. To pin it down rather than guess again, the next step
 needs the exact kick text plus the client brand the server sees.
+
+## Volt 1.1.0 — touch Freelook, crouch, Frame Items Loader
+
+**Freelook did nothing on touch.** `try_freelook_turn` was only called from
+`apply_mouse_look`, so the Android look path (`game.rs`, the `touch.update`
+branch) turned `yaw`/`pitch` directly and the mod never saw a delta. Touch now
+goes through `try_freelook_turn_degrees`, a degree-unit sibling of the
+`Entity.turn`-unit entry point — the touch path feeds `camera_delta`, which has
+already applied the 180-degree scale, so routing it through the 0.15 factor
+would have run the camera at 15% speed. The on-screen **Look** button
+(`Control::Freelook`, appended to the 14 old controls so saved layouts still
+load: `deserialize_layouts` and `deserialize_visibility` accept 10/12/14/15) is
+a latch in `VoltRuntime::freelook_touch_latch`, because a touch button cannot
+hold a key. It shows only while the mod is on, and a real key press hands
+control back to the hold/toggle binding.
+
+**Crouch needed two taps on D-pad devices.** The sneak arm in
+`TouchControls::update` only produced `Button::RightStick` on the second tap
+within 500 ms, and only in `Mode::Dpad`; the first tap stored a timestamp and
+returned `Role::Ignore`. Every scheme now routes through `sneak_toggles()`
+(one tap, except while flying/swimming, where the button is a held descend
+control). `last_sneak_tap` is gone.
+
+**Frame Items Loader** (`VoltBoostPlusConfig::frame_items_loader`, saved as
+`voltFrameItemsLoader`) skips the 1024-block `shouldRenderAtSqrDistance` check
+and the frustum test in `frames.rs` for item frames only. Off by default and
+deliberately excluded from `apply_volt_preset`: it draws more than vanilla, so
+a Boost profile must not switch it on.
+
+## Volt 1.1.0 follow-up — axis sensitivity, GUI framerate
+
+**Horizontal and Vertical sensitivity are now on Volt Settings → Controls.**
+`Opt::TouchSensitivityHorizontal`/`Vertical` already existed and already scaled
+each axis on its own in `camera_delta` (`sensitivity * sensitivity_horizontal` on
+x, `* sensitivity_vertical` on y), but the Volt Controls page only listed the
+combined `TouchSensitivity`, so the per-axis controls were unreachable there.
+Both are 10%–300%, applied continuously by `set_slider`, and the new
+`axis_sensitivity_scales_its_own_axis_only` test pins that each one moves only
+its own axis and that the lowest setting still turns the camera.
+
+**Menus no longer clamp to a flat 60 FPS.** `framerate_limit` returned a literal
+`60` for `ThrottleReason::OutOfLevelMenu`, so a screen opened over gameplay, or
+any GUI at the title, ignored Max Framerate: setting 90 or 120 still showed 60
+in every menu. It is now `option_limit.min(60)`, so a player who chose 30 keeps
+30, and one who chose 120 keeps 120 in menus. This is what "it still lowers FPS
+in all GUIs" was: not the Dynamic FPS mod, which only engages after 35 s without
+input or when unfocused. The Volt idle-menu cap (after 10 s idle) also skips the
+hidden-HUD state now, since hiding the HUD is not a menu.

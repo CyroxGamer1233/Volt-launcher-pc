@@ -392,7 +392,7 @@ impl ControlsStudio {
         }
         let move_idx = Control::Move as usize;
         let move_vis = self.settings.button_visibility[move_idx];
-        self.settings.button_visibility = [2; 14];
+        self.settings.button_visibility = [2; 15];
         self.settings.button_visibility[move_idx] = move_vis;
         let has_menu = self.settings.custom_buttons.iter().any(|b| {
             std::iter::once(&b.key)
@@ -1706,6 +1706,7 @@ impl ControlsStudio {
                     Control::Perspective => "F5",
                     Control::Offhand => "OFF",
                     Control::Shield => "SHD",
+                    Control::Freelook => "LOOK",
                     Control::Move => "",
                 };
                 draw_label_centered(ui, [rx, ry, rw, rh], 10.5, theme::TEXT(), short);

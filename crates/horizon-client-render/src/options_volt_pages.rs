@@ -29,6 +29,7 @@ pub enum VoltAct {
     BoostMeshPool,
     BoostOffscreenSkip,
     BoostFramePacer,
+    BoostFrameItemsLoader,
     // --- Volt QoL (#2, #3, #8, #9, #15, #17, #18, #25) ---
     QolZoom,
     QolZoomFov,
@@ -151,6 +152,7 @@ impl VoltAct {
             Self::BoostMeshPool => "Zero-Stutter Mesh Pool",
             Self::BoostOffscreenSkip => "Offscreen Entity Skip",
             Self::BoostFramePacer => "Smart Frame Pacer",
+            Self::BoostFrameItemsLoader => "Frame Items Loader",
             Self::QolZoom => "Optic Zoom (Hold C)",
             Self::QolZoomFov => "Zoom Magnification",
             Self::QolZoomSmooth => "Cinematic Smooth Zoom",
@@ -238,6 +240,7 @@ impl VoltAct {
             Self::BoostMeshPool => on_off(e.volt_boost_plus.zero_stutter_mesh_pool).into(),
             Self::BoostOffscreenSkip => on_off(e.volt_boost_plus.offscreen_entity_skip).into(),
             Self::BoostFramePacer => on_off(e.volt_boost_plus.smart_frame_pacer).into(),
+            Self::BoostFrameItemsLoader => on_off(e.volt_boost_plus.frame_items_loader).into(),
             Self::QolZoom => on_off(e.volt_qol.zoom_enabled || e.zoom).into(),
             Self::QolZoomFov => format!("{}% FOV", e.volt_qol.zoom_fov_pct),
             Self::QolZoomSmooth => on_off(e.volt_qol.zoom_smooth).into(),
@@ -331,10 +334,11 @@ impl VoltAct {
             Self::BoostMeshPool => "Expands multi-worker SectionMesh buffer recycling to eliminate chunk-meshing frame spikes.",
             Self::BoostOffscreenSkip => "Skips animation updates for distant block entities and off-frustum mobs.",
             Self::BoostFramePacer => "Smooths frame delivery intervals to prevent mobile GPU thermal throttling.",
+            Self::BoostFrameItemsLoader => "Draws item frames and glow item frames from any distance: past the 1024-block limit and outside your view. Only framed items are loaded, nothing else.",
             Self::QolZoom => "Enables smooth spyglass-free optic zoom (Key C or touch Zoom) with proportional look scaling.",
             Self::QolZoomFov => "Target field-of-view percentage when zooming in.",
             Self::QolZoomSmooth => "Smoothly interpolates FOV transitions instead of snapping instantly.",
-            Self::QolFreelook => "Orbit camera 360 degrees around your player without changing movement heading.",
+            Self::QolFreelook => "Orbit the camera 360 degrees around your player without changing movement heading. Hold the key, or tap Look on the touch HUD.",
             Self::QolInspector => "Jade/WTHIT top-center HUD card showing looked-at block/entity info, crop growth & HP.",
             Self::QolBlueprint => "Projects a 3D translucent build hologram in front of your anchor position.",
             Self::QolBlueprintPreset => "Selects the active 3D blueprint structure template.",
@@ -444,6 +448,9 @@ impl VoltAct {
             }
             Self::BoostFramePacer => {
                 e.volt_boost_plus.smart_frame_pacer = !e.volt_boost_plus.smart_frame_pacer
+            }
+            Self::BoostFrameItemsLoader => {
+                e.volt_boost_plus.frame_items_loader = !e.volt_boost_plus.frame_items_loader
             }
             Self::QolZoom => {
                 let on = !(e.volt_qol.zoom_enabled || e.zoom);
@@ -706,4 +713,5 @@ pub const BOOST_PLUS_ITEMS: &[VoltAct] = &[
     VoltAct::BoostMeshPool,
     VoltAct::BoostOffscreenSkip,
     VoltAct::BoostFramePacer,
+    VoltAct::BoostFrameItemsLoader,
 ];

@@ -14205,6 +14205,13 @@ impl Game<'_> {
             self.pad.touch.mounted = self.riding.is_some();
             self.pad.touch.shield_available = self.touch_shield_available();
             self.pad.touch.sneaking = self.keys.contains(&KeyCode::ShiftLeft);
+            // The Look button only exists while Freelook is enabled.
+            self.pad.touch.freelook_available = self.settings.extras.volt_qol.freelook_enabled
+                || self
+                    .settings
+                    .extras
+                    .mod_catalog
+                    .is_on(horizon_client::volt_mods::VoltModId::Freelook);
             self.pad.touch.break_progress = self.touch_mining_progress();
             // Pojav-style button background images go under the overlay
             // pass, so the stroke and label stay readable on top.
@@ -15563,8 +15570,13 @@ impl Game<'_> {
                 );
                 self.tutorial
                     .mouse(f64::from(delta[0]), f64::from(delta[1]));
-                self.yaw += delta[0];
-                self.pitch = (self.pitch + delta[1]).clamp(-90.0, 90.0);
+                // Touch look takes the same route as the mouse: while freelook
+                // is on, the finger orbits the camera instead of turning the
+                // player, so movement heading and the server rotation stay put.
+                if !self.try_freelook_turn_degrees(delta[0], delta[1]) {
+                    self.yaw += delta[0];
+                    self.pitch = (self.pitch + delta[1]).clamp(-90.0, 90.0);
+                }
                 if self.pad.touch.chat_requested {
                     self.audio.play_button_click();
                     self.pad.touch.clear();
@@ -15583,6 +15595,9 @@ impl Game<'_> {
                         self.debug_key(KeyCode::F3, KeyAction::Press);
                         self.debug_key(KeyCode::F3, KeyAction::Release);
                     }
+                } else if std::mem::take(&mut self.pad.touch.freelook_requested) {
+                    self.audio.play_button_click();
+                    self.toggle_freelook_touch();
                 } else if std::mem::take(&mut self.pad.touch.perspective_requested) {
                     self.audio.play_button_click();
                     if let Err(error) = self.key_pressed(KeyCode::F5) {
