@@ -705,7 +705,10 @@ impl Game<'_> {
                         }
                     }
                     Action::Key(key) => {
-                        if key != KeyCode::F3 && !self.pad.touch_ui.key_held(KeyCode::F3) {
+                        if key != KeyCode::F3
+                            && !self.pad.touch_ui.key_held(KeyCode::F3)
+                            && !self.android_waiting_for_binding()
+                        {
                             self.pad.touch_ui.expanded = false;
                         }
                         if self.android_capture_binding_key(key)? {

@@ -624,6 +624,22 @@ impl TouchControls {
                 .values()
                 .any(|(role, _)| matches!(role, Role::Shield))
     }
+    /// Whether the shield is raised right now. A raise is always explicit:
+    /// the shield button when it is laid out, else the use/trigger press.
+    /// Crouching never raises it — vanilla suppresses a shield while sneaking,
+    /// and the sneak control shares `Button::RightStick` with the pad's stick
+    /// click, so counting that as a raise opened the shield on every crouch.
+    pub fn shield_raised(&self, use_pressed: bool, in_menu: bool, touch_visible: bool) -> bool {
+        touch_visible
+            && !in_menu
+            && !self.sneaking
+            && self.shield_available
+            && if self.settings.shield_button {
+                self.shield_held()
+            } else {
+                use_pressed
+            }
+    }
     pub fn pointer(&self) -> Option<[f32; 2]> {
         if self.crosshair() {
             return None;
@@ -1734,6 +1750,41 @@ mod tests {
         t.settings.left_handed = true;
         t.update(2, [0.87, 0.66], true, false);
         assert_eq!(t.state().left, [0.0, 1.0]);
+    }
+    #[test]
+    fn crouching_never_raises_the_shield() {
+        let mut t = TouchControls::default();
+        t.shield_available = true;
+        // Sneaking is not a raise, with or without the shield button.
+        t.sneaking = true;
+        assert!(!t.shield_raised(true, false, true));
+        assert!(!t.shield_raised(false, false, true));
+        t.settings.shield_button = true;
+        assert!(!t.shield_raised(false, false, true));
+        // Standing, the use press raises it when there is no shield button.
+        t.sneaking = false;
+        t.settings.shield_button = false;
+        assert!(t.shield_raised(true, false, true));
+        assert!(!t.shield_raised(false, false, true));
+        // No block or shield to raise, or the game is not showing touch
+        // controls, or a menu is up: no raise either.
+        t.shield_available = false;
+        assert!(!t.shield_raised(true, false, true));
+        t.shield_available = true;
+        assert!(!t.shield_raised(true, true, true));
+        assert!(!t.shield_raised(true, false, false));
+    }
+    #[test]
+    fn the_shield_button_holds_the_raise_while_sneaking_does_not() {
+        let mut t = TouchControls::default();
+        t.shield_available = true;
+        t.settings.shield_button = true;
+        // The button is the only raise once it is laid out; a bare use press
+        // beside it must not raise, and crouching must not either.
+        assert!(!t.shield_raised(true, false, true));
+        assert!(!t.shield_held());
+        t.sneaking = true;
+        assert!(!t.shield_raised(false, false, true));
     }
     #[test]
     fn sneak_taps_mark_touch_origin_for_the_pad_toggle() {
