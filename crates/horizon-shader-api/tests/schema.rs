@@ -184,6 +184,18 @@ fn shadow_and_reflection_options_count_as_used() {
     }
 }
 
+/// An unknown top-level key is ignored, not refused: a published pack declares
+/// `[vertex]`, `[textures]` and friends, and refusing unknown keys made every
+/// one of them uninstallable. A misspelled `licence` is metadata quietly
+/// dropped, which is the price of reading packs written for a newer API.
+#[test]
+fn an_unknown_top_level_key_is_ignored() {
+    let text = sample_text().replace("license = \"MIT\"", "licence = \"MIT\"");
+    let m = Manifest::parse(&text).expect("unknown keys are metadata, not an error");
+    assert!(m.license.is_none());
+    assert_eq!(m.id, "sample_pack");
+}
+
 #[test]
 fn the_smallest_manifest() {
     let m = Manifest::parse(
@@ -205,10 +217,6 @@ fn refuses_what_this_build_does_not_read() {
         (
             text.replace("\"sample_pack\"", "\"Sample\""),
             "is not [a-z0-9_]",
-        ),
-        (
-            text.replace("license = \"MIT\"", "licence = \"MIT\""),
-            "unknown field",
         ),
         (
             text.replace("gpu_ms = 1.5", "gpu_ms = 40.0"),
