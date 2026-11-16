@@ -802,6 +802,10 @@ impl Extras {
                 "voltSmartFramePacer" => {
                     e.volt_boost_plus.smart_frame_pacer = flag(e.volt_boost_plus.smart_frame_pacer)
                 }
+                "voltFrameItemsLoader" => {
+                    e.volt_boost_plus.frame_items_loader =
+                        flag(e.volt_boost_plus.frame_items_loader)
+                }
                 // --- Volt QoL (#2, #3, #8, #9, #15, #17, #18, #25) ---
                 "voltQolZoom" => e.volt_qol.zoom_enabled = flag(e.volt_qol.zoom_enabled),
                 "voltQolZoomFov" => {
@@ -1317,6 +1321,10 @@ impl Extras {
             "voltSmartFramePacer",
             bool_text(self.volt_boost_plus.smart_frame_pacer),
         );
+        push(
+            "voltFrameItemsLoader",
+            bool_text(self.volt_boost_plus.frame_items_loader),
+        );
         // Volt QoL
         push("voltQolZoom", bool_text(self.volt_qol.zoom_enabled));
         push("voltQolZoomFov", &self.volt_qol.zoom_fov_pct.to_string());
@@ -1558,6 +1566,9 @@ impl Extras {
         self.volt_boost_plus.zero_stutter_mesh_pool = enable_plus;
         self.volt_boost_plus.offscreen_entity_skip = enable_plus;
         self.volt_boost_plus.smart_frame_pacer = enable_plus;
+        // The Frame Items Loader is a look, not a speed preset: it draws more
+        // than vanilla, so it must never be switched on (or off) by a Boost
+        // profile. The player sets it themselves.
         match preset {
             VoltBoostPreset::Off => {
                 self.cull_leaves = false;

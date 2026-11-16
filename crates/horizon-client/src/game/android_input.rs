@@ -24,7 +24,7 @@ impl Game<'_> {
     ) -> Result<bool> {
         if !self.pad_in_menu()
             || crate::platform::active()
-            || self.ui.options.selected_key.is_some()
+            || self.android_waiting_for_binding()
         {
             return Ok(false);
         }
@@ -150,40 +150,64 @@ impl Game<'_> {
             }),
         })
     }
-    /// Reloads the mod on/off switches (and the extras beside them) from
-    /// `dir`'s `horizon-mods.txt`, and says what changed, so a toggle that
-    /// reached the game is visible proof on screen and in the log.
+    /// Reloads the mod on/off switches and the adjacent extras file from `dir`.
+    /// The live runtime, renderer settings and Android bindings are updated too.
     pub(super) fn reload_mod_switches(&mut self, dir: &std::path::Path, announce: bool) {
-        let before = self.settings.mods.disabled.clone();
+        let before_enabled = self.settings.mods.enabled.clone();
+        let before_disabled = self.settings.mods.disabled.clone();
+        let before_keys = self.settings.mods.keys.clone();
+        let before_extras = self.settings.extras.clone();
         let fresh = horizon_client::mod_list::ModList::load(dir);
         self.settings.mods.enabled = fresh.enabled;
         self.settings.mods.disabled = fresh.disabled;
         self.settings.mods.keys = fresh.keys;
         self.settings.extras = horizon_client::extras::Extras::load(dir);
+        let extras_changed = self.settings.extras != before_extras;
+        if extras_changed {
+            // Applying every setting also reapplies window and renderer state.
+            // A mod-switch-only reload does not need those side effects.
+            self.apply_settings();
+            self.sync_agent_control();
+        }
+        // Keep the file watcher in step with explicit in-process reload notes;
+        // otherwise it would immediately process the same write again.
+        if let Ok(current_dir) = std::env::current_dir()
+            && current_dir.as_path() == dir
+        {
+            self.mods_file_stamp = std::fs::metadata(dir.join("horizon-mods.txt"))
+                .and_then(|m| m.modified())
+                .ok();
+        }
         // `poll_pads` notices the "3D Skins" flip and rebuilds models.
         self.list_native_mods();
-        if self.settings.mods.disabled == before {
+        // A launcher-side `.hmod` toggle changes `enabled`, not `disabled`.
+        // Reconcile the running Wasm set too; native rows are refreshed above.
+        self.sync_mods();
+        #[cfg(feature = "mods")]
+        if self.settings.mods.keys != before_keys {
+            let chosen = &self.settings.mods;
+            self.mods.mods.set_bindings(|id| chosen.keys_of(id));
+        }
+        let changed = self.settings.mods.enabled != before_enabled
+            || self.settings.mods.disabled != before_disabled
+            || self.settings.mods.keys != before_keys
+            || extras_changed;
+        if !changed {
             return;
         }
-        let off: Vec<&str> = self
-            .settings
-            .mods
-            .disabled
-            .iter()
-            .map(String::as_str)
-            .collect();
-        let line = if off.is_empty() {
-            "Volt: all mods are on.".to_owned()
-        } else {
-            format!("Volt: {} mod(s) off: {}.", off.len(), off.join(", "))
-        };
-        log::info!("{line} (from {})", dir.display());
+        let line = "Volt: mod switches and runtime settings reloaded.".to_owned();
+        log::info!(
+            "{line} ({} enabled IDs, {} disabled IDs; from {})",
+            self.settings.mods.enabled.len(),
+            self.settings.mods.disabled.len(),
+            dir.display()
+        );
         if announce {
             self.system_message(horizon_client::text::Text::literal(line));
         }
     }
-    /// Once every two seconds: if `horizon-mods.txt` in the game home was
-    /// rewritten by anyone, apply it — independent of the launcher's note.
+    /// Once every two seconds: if `horizon-mods.txt` was created, rewritten
+    /// or removed by any writer, apply it — independent of the launcher's note.
     fn watch_mods_file(&mut self) {
         let now = std::time::Instant::now();
         if self
@@ -197,16 +221,14 @@ impl Game<'_> {
         let stamp = std::fs::metadata(dir.join("horizon-mods.txt"))
             .and_then(|m| m.modified())
             .ok();
-        if self.mods_file_stamp == stamp {
+        if !super::mods::mods_file_stamp_changed(&self.mods_file_stamp, &stamp) {
             return;
         }
-        let first = self.mods_file_stamp.is_none() && stamp.is_some();
         self.mods_file_stamp = stamp;
-        // The first sighting is the file the startup load already read:
-        // record it quietly; afterwards every change applies and is said.
-        if !first {
-            self.reload_mod_switches(&dir, true);
-        }
+        // Do not special-case the first Some: an older launcher, file manager,
+        // or other writer may create the file only after the game has started.
+        // Reloading an unchanged startup file is harmless; a new file must apply.
+        self.reload_mod_switches(&dir, true);
     }
     pub(super) fn android_custom_events(&mut self) {
         for (name, down) in self.pad.touch.key_events() {
@@ -278,6 +300,16 @@ impl Game<'_> {
                 _ => {}
             }
             if let Some(mapping) = name.strip_prefix("action:") {
+                // Freelook is a Volt mod binding, not a vanilla key: its default
+                // (Left Alt) is not a mapping the game acts on, so a touch
+                // button bound to it would otherwise do nothing. Ask the game
+                // to flip the camera instead.
+                if mapping == "key.volt.freelook" {
+                    if down {
+                        self.pad.touch.freelook_requested = true;
+                    }
+                    continue;
+                }
                 let default = horizon_client::keybinds::KeyBinds::default_of(mapping);
                 let result = if let Some(key) = horizon_client::keybinds::key_code(default) {
                     if down && self.screenshot_shortcut(key, false) {
@@ -496,6 +528,34 @@ impl Game<'_> {
             Ok(())
         }
     }
+    pub(super) fn android_waiting_for_binding(&self) -> bool {
+        let options = self.screen == Screen::Options && self.options_waiting_for_key();
+        #[cfg(feature = "mods")]
+        let waiting = options || (self.screen == Screen::Mod && self.mod_screen_waiting_for_key());
+        #[cfg(not(feature = "mods"))]
+        let waiting = options;
+        waiting
+    }
+
+    /// A touch HUD key is a physical-key substitute. Honor it while an
+    /// Options or native-mod row is waiting for a binding instead of sending
+    /// it through gameplay's key handling.
+    pub(super) fn android_capture_binding_key(&mut self, key: KeyCode) -> Result<bool> {
+        if !self.android_waiting_for_binding() {
+            return Ok(false);
+        }
+        if self.screen == Screen::Options {
+            self.options_key(key, None)?;
+            return Ok(true);
+        }
+        #[cfg(feature = "mods")]
+        if self.screen == Screen::Mod {
+            self.mod_screen_key(key);
+            return Ok(true);
+        }
+        Ok(false)
+    }
+
     pub(super) fn android_aux_touch(
         &mut self,
         t: &Touch,
@@ -582,15 +642,17 @@ impl Game<'_> {
                 self.pad.touch.ignore(t.id);
                 match action {
                     Action::LatchF3 => {
-                        let was = self.pad.touch_ui.key_held(KeyCode::F3);
-                        self.pad.touch_ui.f3_latched = !self.pad.touch_ui.f3_latched;
-                        let now = self.pad.touch_ui.key_held(KeyCode::F3);
-                        if !was && now {
-                            self.physical_keys.insert(KeyCode::F3);
-                            self.debug_key(KeyCode::F3, KeyAction::Press);
-                        }
-                        if was && !now {
-                            self.android_key_up(KeyCode::F3);
+                        if !self.android_capture_binding_key(KeyCode::F3)? {
+                            let was = self.pad.touch_ui.key_held(KeyCode::F3);
+                            self.pad.touch_ui.f3_latched = !self.pad.touch_ui.f3_latched;
+                            let now = self.pad.touch_ui.key_held(KeyCode::F3);
+                            if !was && now {
+                                self.physical_keys.insert(KeyCode::F3);
+                                self.debug_key(KeyCode::F3, KeyAction::Press);
+                            }
+                            if was && !now {
+                                self.android_key_up(KeyCode::F3);
+                            }
                         }
                     }
                     Action::Pick => {
@@ -599,14 +661,16 @@ impl Game<'_> {
                         self.pad.touch_ui.expanded = false;
                     }
                     Action::DebugCombo(key) => {
-                        let held = self.pad.touch_ui.key_held(KeyCode::F3);
-                        if !held {
-                            self.debug_key(KeyCode::F3, KeyAction::Press);
-                        }
-                        self.debug_key(key, KeyAction::Press);
-                        self.debug_key(key, KeyAction::Release);
-                        if !held {
-                            self.debug_key(KeyCode::F3, KeyAction::Release);
+                        if !self.android_capture_binding_key(key)? {
+                            let held = self.pad.touch_ui.key_held(KeyCode::F3);
+                            if !held {
+                                self.debug_key(KeyCode::F3, KeyAction::Press);
+                            }
+                            self.debug_key(key, KeyAction::Press);
+                            self.debug_key(key, KeyAction::Release);
+                            if !held {
+                                self.debug_key(KeyCode::F3, KeyAction::Release);
+                            }
                         }
                         self.pad.touch_ui.expanded = false;
                     }
@@ -632,7 +696,9 @@ impl Game<'_> {
                     }
                     Action::More => self.pad.touch_ui.expanded = !self.pad.touch_ui.expanded,
                     Action::Keyboard => {
-                        if crate::platform::active() {
+                        if self.android_waiting_for_binding() || crate::platform::active() {
+                            // The IME produces text, not a physical keycode the
+                            // binding picker can store.
                             crate::platform::hide();
                         } else {
                             self.android_show_keyboard();
@@ -642,7 +708,9 @@ impl Game<'_> {
                         if key != KeyCode::F3 && !self.pad.touch_ui.key_held(KeyCode::F3) {
                             self.pad.touch_ui.expanded = false;
                         }
-                        if key == KeyCode::Escape {
+                        if self.android_capture_binding_key(key)? {
+                            // Capture consumes the tap without holding a gameplay key.
+                        } else if key == KeyCode::Escape {
                             crate::platform::hide();
                             self.pad_back()?;
                         } else if matches!(
@@ -885,7 +953,13 @@ impl Game<'_> {
             return;
         };
         let p = [t.location.x as f32 / b.scale, t.location.y as f32 / b.scale];
-        let direct = self.pad.touch_ui.direct_pointer(t.id, p, t.phase);
+        let waiting_for_binding = self.android_waiting_for_binding();
+        let direct = self.pad.touch_ui.direct_pointer_with_mouse(
+            t.id,
+            p,
+            t.phase,
+            !waiting_for_binding,
+        );
         self.window_event(
             events,
             id,
@@ -894,8 +968,8 @@ impl Game<'_> {
                 position: t.location,
             },
         );
-        if direct {
-            if t.phase != TouchPhase::Moved {
+        if let Some(allow_mouse_click) = direct {
+            if allow_mouse_click && t.phase != TouchPhase::Moved {
                 self.window_event(
                     events,
                     id,
@@ -912,11 +986,12 @@ impl Game<'_> {
             }
             return;
         }
-        match self
-            .pad
-            .touch_ui
-            .gesture(t.id, [t.location.x as f32, t.location.y as f32], t.phase)
-        {
+        match self.pad.touch_ui.gesture_with_tap(
+            t.id,
+            [t.location.x as f32, t.location.y as f32],
+            t.phase,
+            !waiting_for_binding,
+        ) {
             Gesture::Tap => {
                 let field = crate::platform::field_at(p);
                 for state in [ElementState::Pressed, ElementState::Released] {

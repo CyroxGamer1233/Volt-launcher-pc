@@ -1160,5 +1160,3 @@ fn stage_vulkan_driver(
     let _ = std::fs::remove_file(&staged);
     result
 }
-
-

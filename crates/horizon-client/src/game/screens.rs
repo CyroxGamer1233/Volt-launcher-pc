@@ -54,7 +54,7 @@ fn pause_buttons(
     links: bool,
 ) -> Vec<(f32, f32, f32, &'static str, u8, bool)> {
     // GridLayout of two 98px columns (padding 4), aligned at (0.5, 0.25).
-    let (grid_w, grid_h) = (212.0, 166.0 + if links { 24.0 } else { 0.0 });
+    let (grid_w, grid_h) = (212.0, 190.0 + if links { 24.0 } else { 0.0 });
     let x0 = ((w - grid_w) * 0.5).floor();
     let y0 = ((h - grid_h) * 0.25).floor();
     let down = if links { 24.0 } else { 0.0 };
@@ -90,6 +90,10 @@ fn pause_buttons(
             true,
         ),
         (x0 + 4.0, y0 + 170.0 + down, 204.0, "volt.settings.button", 14, true),
+        // Controls one tap from the game. Vanilla reaches key binds through
+        // Options > Controls, which players on a phone could not find - the
+        // reported "no controls in the game dashboard".
+        (x0 + 4.0, y0 + 194.0 + down, 204.0, "options.controls", 15, true),
     ]);
     v
 }
@@ -279,6 +283,9 @@ impl Game<'_> {
                 self.capture(true);
             }
             Some(1) => self.open_options(false),
+            Some(15) => {
+                self.open_options_at(false, horizon_client::options_ui::Page::Controls)
+            }
             Some(14) => {
                 self.open_options_at(false, horizon_client::options_ui::Page::VoltGlass)
             }
@@ -588,15 +595,22 @@ mod tests {
         assert_eq!(links.2, 204.0);
         assert_eq!(links.3, "menu.server_links");
         assert!(links.5);
-        // The icon row sits above it; Options and Disconnect move down 24.
+        // The icon row sits above it. The grid grows by 24 when the server
+        // links row is present, so the buttons below it (Options, World
+        // Options, Disconnect, Volt Settings, Controls) all move down 24
+        // together - and the icon row moves up 6, because the grid is
+        // centred a quarter of the way down the screen.
+        let (grid_h_with, grid_h_without) = (190.0 + 24.0, 190.0);
         let icons = pause_icons(427.0, 240.0, true);
-        let y0_icons = ((240.0f32 - 190.0) * 0.25).floor() + 98.0;
+        let y0_icons = ((240.0f32 - grid_h_with) * 0.25).floor() + 98.0;
         assert_eq!(icons[0].1, y0_icons);
         assert!(links.1 > icons[0].1);
         for b in &with {
-            if b.4 == 1 || b.4 == 9 || b.4 == 2 {
+            if b.4 == 1 || b.4 == 9 || b.4 == 2 || b.4 == 14 || b.4 == 15 {
                 let same = without.iter().find(|o| o.4 == b.4).unwrap();
-                assert_eq!(b.1, same.1 + 24.0 - 6.0, "{}", b.3);
+                // Grid origin shifts by (grid_h_without - grid_h_with) / 4.
+                let shift = (grid_h_without - grid_h_with) * 0.25;
+                assert_eq!(b.1, same.1 + 24.0 + shift, "{}", b.3);
             }
         }
     }

@@ -127,12 +127,17 @@ fn check_with_options(pack: &Pack, translate_backends: bool) -> Result<Report, V
     }
     if problems.is_empty() {
         for option in &m.options {
-            let used = checked.iter().any(|c| {
-                c.module
-                    .overrides
-                    .iter()
-                    .any(|(_, o)| o.name.as_deref() == Some(&option.id))
-            });
+            // `[shadow]` and `[reflection]` drive their options from stages
+            // this API line does not compile, so their `override` is in a file
+            // no compiled stage holds. Not counting them refused real packs
+            // with "option `shadow_resolution`: no stage declares".
+            let used = m.extra_options.contains(&option.id)
+                || checked.iter().any(|c| {
+                    c.module
+                        .overrides
+                        .iter()
+                        .any(|(_, o)| o.name.as_deref() == Some(&option.id))
+                });
             if !used {
                 problems.push(problem(
                     crate::MANIFEST,

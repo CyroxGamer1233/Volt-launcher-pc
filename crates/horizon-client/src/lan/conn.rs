@@ -838,11 +838,11 @@ fn login_and_configure(
     )?;
     // The mod-message announcement comes before anything is asked of the
     // client (horizon_protocol::mod_net): a vanilla client ignores the
-    // unknown payload, a Horizon client answers it with an empty hello and
-    // is known by the time SelectKnownPacks returns. The client no longer
+    // unknown payload, a Horizon client answers it with an empty hello and is
+    // known by the time SelectKnownPacks returns. The client no longer
     // volunteers that hello unasked - public servers' anti-bot plugins
     // fingerprint unexpected configuration payloads and fail their captcha
-    // flows - so the server must speak first.
+    // flows - so the host must speak first.
     send(
         c,
         cfg::Clientbound::CustomPayload(cfg::CustomPayload {

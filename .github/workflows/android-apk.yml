@@ -97,7 +97,12 @@ jobs:
               raise SystemExit(f"Unsupported ABI(s): {unknown}")
 
           include = [{"abi": abi, "target": targets[abi]} for abi in selected]
-          publish_release = (event == "push") or ref.startswith("refs/tags/v") or (event == "workflow_dispatch" and input_publish)
+          # Session branches publish nothing: only `android`, `v*` tags and an
+          # explicit dispatch may refresh the rolling `debug` release. The
+          # release job deploys rolling debug builds only and never marks them
+          # pre-release, so players never see a pre-release channel.
+          is_android = ref == "refs/heads/android"
+          publish_release = is_android or ref.startswith("refs/tags/v") or (event == "workflow_dispatch" and input_publish)
 
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as out:
               out.write(f"matrix={json.dumps({'include': include})}\n")
@@ -670,6 +675,22 @@ jobs:
           if text:
               safe = text[-3500:].replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
               print('::error title=Native weave failed::' + safe)
+          build_log = root / 'build.log'
+          if build_log.is_file():
+              lines = build_log.read_text(errors='replace').splitlines()
+              markers = [i for i, line in enumerate(lines)
+                         if line.lstrip().startswith(('error[', 'error:'))]
+              if markers:
+                  excerpts = []
+                  end = -1
+                  for i in markers:
+                      start = max(i - 1, end)
+                      stop = min(len(lines), i + 8)
+                      excerpts.extend(lines[start:stop])
+                      end = stop
+                  details = '\n'.join(excerpts)
+                  safe = details[:18000].replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
+                  print('::error title=Native Rust compiler diagnostics::' + safe)
           PYCODE
       - name: Upload woven engine library for packaging
         uses: actions/upload-artifact@v4

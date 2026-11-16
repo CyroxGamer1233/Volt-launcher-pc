@@ -599,8 +599,8 @@ fn run(
         }
     };
     status(send, "Joining world...");
-    c.send(&cfg::Serverbound::ClientInformation(info).encode())
-        .map_err(e)?;
+    // ClientHandshakePacketListenerImpl.handleLoginFinished sends the brand
+    // before client information.
     c.send(
         &cfg::Serverbound::CustomPayload(cfg::CustomPayload {
             channel: "minecraft:brand".into(),
@@ -609,13 +609,15 @@ fn run(
         .encode(),
     )
     .map_err(e)?;
+    c.send(&cfg::Serverbound::ClientInformation(info).encode())
+        .map_err(e)?;
     // Nothing else is volunteered here. A vanilla client's configuration
     // phase sends exactly ClientInformation and minecraft:brand; anti-bot
-    // plugins on public servers fingerprint any extra plugin message and
-    // fail the join (their captcha flows kick with "captcha failed"). A
-    // Horizon host announces `horizon:mod_net` itself (a vanilla client
-    // ignores it), and only that announcement is answered with the client's
-    // hello - see `configure`.
+    // plugins on public servers (AuthMe, Sonar, nAntiBot) fingerprint any
+    // extra plugin message and fail the join with a "captcha failed" kick. A
+    // Horizon host announces `horizon:mod_net` itself - a vanilla client
+    // ignores the unknown payload - and only that announcement is answered
+    // with this client's hello, in `configure` below.
     let (mut reader, writer) = c.split();
     *shared_writer.lock().unwrap() = Some(writer);
     let registries = configure(
@@ -776,8 +778,8 @@ fn configure(
                     data: hash.to_vec(),
                 }))?;
             }
-            // The server announced it carries mod messages: only now does
-            // the client identify as Horizon, with the empty hello the
+            // The server announced it carries mod messages: only now does the
+            // client identify as Horizon, with the empty hello the
             // announcement asks for. Public vanilla servers never announce,
             // so they never see a non-vanilla payload from this client.
             cfg::Clientbound::CustomPayload(p)
@@ -1330,6 +1332,141 @@ mod tests {
     use super::*;
 
     #[test]
+    fn direct_login_sends_vanilla_brand_before_client_information() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let session = Session::connect(
+            &format!("127.0.0.1:{port}"),
+            "Probe",
+            None,
+            cfg::ClientInformation::new(8),
+            Arc::new(Language::new()),
+            PathBuf::new(),
+            None,
+        );
+        let (stream, _) = listener.accept().unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        let mut server = Connection::from_stream(stream).unwrap();
+        let (id, body) = server.recv().unwrap();
+        let handshake::Serverbound::Intention(packet) =
+            handshake::Serverbound::decode(id, &body).unwrap()
+        else {
+            panic!("expected login handshake")
+        };
+        assert_eq!((packet.host.as_str(), packet.port), ("127.0.0.1", port));
+        assert_eq!(packet.intent, handshake::LOGIN);
+        server.recv().unwrap(); // login profile
+        server
+            .send(
+                &login::Clientbound::LoginFinished(login::LoginFinished {
+                    profile: login::GameProfile {
+                        uuid: 1,
+                        name: "Probe".into(),
+                        properties: vec![],
+                    },
+                    session: 1,
+                })
+                .encode(),
+            )
+            .unwrap();
+        let (id, body) = server.recv().unwrap();
+        assert!(matches!(
+            login::Serverbound::decode(id, &body).unwrap(),
+            login::Serverbound::LoginAcknowledged(_)
+        ));
+        let (id, body) = server.recv().unwrap();
+        assert_eq!(
+            cfg::Serverbound::decode(id, &body).unwrap(),
+            cfg::Serverbound::CustomPayload(cfg::CustomPayload {
+                channel: "minecraft:brand".into(),
+                data: b"\x07vanilla".to_vec(),
+            })
+        );
+        let (id, body) = server.recv().unwrap();
+        assert!(matches!(
+            cfg::Serverbound::decode(id, &body).unwrap(),
+            cfg::Serverbound::ClientInformation(_)
+        ));
+        // Public servers' anti-bot plugins fingerprint any non-vanilla payload
+        // during configuration and fail their captcha flows, so the Horizon
+        // hello is strictly an answer: the client volunteers nothing else
+        // after ClientInformation.
+        server
+            .reader
+            .set_read_timeout(Some(Duration::from_millis(150)))
+            .unwrap();
+        assert!(
+            server.recv().is_err(),
+            "the client must not volunteer a payload the server did not ask for"
+        );
+        drop(server);
+        drop(session);
+    }
+
+    /// The reply half of the rule above: when a Horizon host announces
+    /// `horizon:mod_net`, the client answers with the empty hello exactly
+    /// once, so LAN hosts still recognise each other.
+    #[test]
+    fn horizon_hello_only_answers_the_servers_mod_net_announcement() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let session = Session::connect(
+            &format!("127.0.0.1:{port}"),
+            "Probe",
+            None,
+            cfg::ClientInformation::new(8),
+            Arc::new(Language::new()),
+            PathBuf::new(),
+            None,
+        );
+        let (stream, _) = listener.accept().unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        let mut server = Connection::from_stream(stream).unwrap();
+        server.recv().unwrap(); // handshake
+        server.recv().unwrap(); // login profile
+        server
+            .send(
+                &login::Clientbound::LoginFinished(login::LoginFinished {
+                    profile: login::GameProfile {
+                        uuid: 1,
+                        name: "Probe".into(),
+                        properties: vec![],
+                    },
+                    session: 1,
+                })
+                .encode(),
+            )
+            .unwrap();
+        server.recv().unwrap(); // LoginAcknowledged
+        server.recv().unwrap(); // minecraft:brand
+        server.recv().unwrap(); // ClientInformation
+        // The host's announcement, in the order lan/conn.rs sends it.
+        server
+            .send(
+                &cfg::Clientbound::CustomPayload(cfg::CustomPayload {
+                    channel: horizon_protocol::mod_net::CHANNEL.into(),
+                    data: Vec::new(),
+                })
+                .encode(),
+            )
+            .unwrap();
+        let (id, body) = server.recv().unwrap();
+        assert_eq!(
+            cfg::Serverbound::decode(id, &body).unwrap(),
+            cfg::Serverbound::CustomPayload(cfg::CustomPayload {
+                channel: horizon_protocol::mod_net::CHANNEL.into(),
+                data: Vec::new(),
+            })
+        );
+        drop(server);
+        drop(session);
+    }
+
+    #[test]
     fn legacy_ping_request_is_the_1_6_ping_host_packet() {
         let bytes = legacy_ping_request("a.b", 25565);
         assert_eq!(&bytes[..3], &[254, 1, 250]);
@@ -1489,64 +1626,6 @@ mod tests {
             std::env::temp_dir().join(format!("horizon-content-identity-{}", std::process::id())),
         )
         .unwrap();
-    }
-
-    /// Public servers' anti-bot plugins fingerprint any non-vanilla payload
-    /// during configuration and fail their captcha flows, so the Horizon
-    /// hello is strictly an answer: silence until the host announces
-    /// `horizon:mod_net`, the empty hello right after it does.
-    #[test]
-    fn horizon_hello_only_answers_the_servers_mod_net_announcement() {
-        let (client, server) = horizon_protocol::connection::Pipe::pair();
-        let (mut reader, writer) = Connection::local(client).split();
-        let writer = Mutex::new(Some(writer));
-        let (events_tx, events) = channel();
-        let thread = std::thread::spawn(move || {
-            configure(
-                &mut reader,
-                &writer,
-                &AtomicBool::new(true),
-                &Language::new(),
-                &events_tx,
-                &Cookies::default(),
-                Path::new("."),
-                None,
-            )
-        });
-        let mut server = Connection::local(server);
-        server
-            .send(
-                &cfg::Clientbound::CustomPayload(cfg::CustomPayload {
-                    channel: horizon_protocol::mod_net::CHANNEL.into(),
-                    data: vec![],
-                })
-                .encode(),
-            )
-            .unwrap();
-        // The next serverbound packet is the hello itself: nothing was
-        // volunteered before the announcement.
-        let (id, body) = server.recv().unwrap();
-        assert_eq!(
-            cfg::Serverbound::decode(id, &body).unwrap(),
-            cfg::Serverbound::CustomPayload(cfg::CustomPayload {
-                channel: horizon_protocol::mod_net::CHANNEL.into(),
-                data: vec![],
-            })
-        );
-        server
-            .send(&cfg::Clientbound::FinishConfiguration(Empty).encode())
-            .unwrap();
-        let (id, body) = server.recv().unwrap();
-        assert_eq!(
-            cfg::Serverbound::decode(id, &body).unwrap(),
-            cfg::Serverbound::FinishConfiguration(Empty)
-        );
-        assert!(thread.join().unwrap().is_ok());
-        let heard: Vec<Event> = events.try_iter().collect();
-        assert!(
-            heard.iter().any(|e| matches!(e, Event::ModNet)),
-            "the game must learn the host carries mod messages"
-        );
     }
 
     #[test]

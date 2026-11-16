@@ -600,7 +600,53 @@ impl<'a> Ui<'a> {
         with_cache(atlas, |c| c.dynamic_rgba(atlas, slot, hash, w, h, rgba))
     }
 
+    /// Draws a dynamic image centered in `bounds`, preserving its source aspect ratio.
     #[allow(clippy::too_many_arguments)]
+    pub fn draw_dynamic_rgba_fit(
+        &mut self,
+        slot: usize,
+        hash: u64,
+        w: u32,
+        h: u32,
+        rgba: &[u8],
+        x: f32,
+        y: f32,
+        draw_w: f32,
+        draw_h: f32,
+        alpha: u8,
+    ) -> bool {
+        if w == 0 || h == 0 || draw_w <= 0.0 || draw_h <= 0.0 {
+            return false;
+        }
+        let Some(rect) = self.dynamic_rgba(slot, hash, w, h, rgba) else {
+            return false;
+        };
+        let scale = (draw_w / w as f32).min(draw_h / h as f32);
+        let fitted_w = w as f32 * scale;
+        let fitted_h = h as f32 * scale;
+        let fit_x = x + (draw_w - fitted_w) * 0.5;
+        let fit_y = y + (draw_h - fitted_h) * 0.5;
+        let (x0, y0, x1, y1) = (
+            self.px_x(fit_x),
+            self.px_y(fit_y),
+            self.px_x(fit_x + fitted_w),
+            self.px_y(fit_y + fitted_h),
+        );
+        if x1 <= x0 || y1 <= y0 {
+            return false;
+        }
+        let s = self.scale;
+        self.batch.rect_uv(
+            x0 / s,
+            y0 / s,
+            (x1 - x0) / s,
+            (y1 - y0) / s,
+            rect,
+            color::hex(0xFFFFFF, alpha),
+        );
+        true
+    }
+
     pub fn draw_dynamic_rgba(
         &mut self,
         slot: usize,

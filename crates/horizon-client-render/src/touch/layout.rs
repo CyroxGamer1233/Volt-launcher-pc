@@ -49,9 +49,12 @@ pub enum Control {
     Perspective,
     Offhand,
     Shield,
+    /// Volt Freelook: orbits the camera without turning the player. It is a
+    /// Volt binding rather than a vanilla one, so it acts as a toggle.
+    Freelook,
 }
 impl Control {
-    pub const ALL: [Self; 14] = [
+    pub const ALL: [Self; 15] = [
         Self::Move,
         Self::Sprint,
         Self::Jump,
@@ -66,6 +69,7 @@ impl Control {
         Self::Perspective,
         Self::Offhand,
         Self::Shield,
+        Self::Freelook,
     ];
     pub fn name(self) -> &'static str {
         match self {
@@ -83,6 +87,7 @@ impl Control {
             Self::Perspective => "Camera perspective (F5)",
             Self::Offhand => "Swap hands",
             Self::Shield => "Raise shield",
+            Self::Freelook => "Freelook (orbit camera)",
         }
     }
 }
@@ -184,22 +189,22 @@ pub struct Settings {
     pub gyro_sensitivity: f32,
     pub attack_indicator_left: bool,
     #[serde(deserialize_with = "deserialize_visibility")]
-    pub button_visibility: [u8; 14],
+    pub button_visibility: [u8; 15],
     pub horizontal_margin: f32,
     pub vertical_margin: f32,
     #[serde(deserialize_with = "deserialize_layouts")]
-    pub layouts: [[Placement; 14]; 3],
+    pub layouts: [[Placement; 15]; 3],
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub imported_from: Option<ImportedMeta>,
 }
 // Append new buttons without resetting a player's existing ten-button layout.
 fn deserialize_layouts<'de, D: serde::Deserializer<'de>>(
     deserializer: D,
-) -> Result<[[Placement; 14]; 3], D::Error> {
+) -> Result<[[Placement; 15]; 3], D::Error> {
     let rows = Vec::<Vec<Placement>>::deserialize(deserializer)?;
-    if rows.len() != 3 || rows.iter().any(|r| !matches!(r.len(), 10 | 12 | 14)) {
+    if rows.len() != 3 || rows.iter().any(|r| !matches!(r.len(), 10 | 12 | 14 | 15)) {
         return Err(serde::de::Error::custom(
-            "expected three touch layouts of 10, 12 or 14 controls",
+            "expected three touch layouts of 10, 12, 14 or 15 controls",
         ));
     }
     let mut layouts = Settings::default().layouts;
@@ -208,14 +213,14 @@ fn deserialize_layouts<'de, D: serde::Deserializer<'de>>(
     }
     Ok(layouts)
 }
-fn deserialize_visibility<'de, D: serde::Deserializer<'de>>(d: D) -> Result<[u8; 14], D::Error> {
+fn deserialize_visibility<'de, D: serde::Deserializer<'de>>(d: D) -> Result<[u8; 15], D::Error> {
     let old = Vec::<u8>::deserialize(d)?;
-    if !matches!(old.len(), 12 | 14) {
+    if !matches!(old.len(), 12 | 14 | 15) {
         return Err(serde::de::Error::custom(
-            "expected 12 or 14 visibility values",
+            "expected 12, 14 or 15 visibility values",
         ));
     }
-    let mut values = [0; 14];
+    let mut values = [0; 15];
     values[..old.len()].copy_from_slice(&old);
     Ok(values)
 }
@@ -236,6 +241,8 @@ impl Default for Settings {
             Placement::new(0.58, 0.055, 0.075),
             Placement::new(0.66, 0.38, 0.09),
             Placement::new(0.92, 0.36, 0.12),
+            // Freelook sits above the jump/attack cluster on the right thumb.
+            Placement::new(0.70, 0.50, 0.10),
         ];
         let mut layouts = [base; 3];
         layouts[2][Control::Sneak as usize] = Placement::new(0.13, 0.76, 0.10);
@@ -264,7 +271,7 @@ impl Default for Settings {
             gyroscope: false,
             gyro_sensitivity: 1.0,
             attack_indicator_left: true,
-            button_visibility: [0; 14],
+            button_visibility: [0; 15],
             horizontal_margin: 0.0,
             vertical_margin: 0.0,
             layouts,

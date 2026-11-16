@@ -69,7 +69,7 @@ impl TouchControls {
             } else if layout::contains([0.25, 0.04, 0.105, 0.075], p) {
                 self.settings.layouts[self.settings.mode.index()] =
                     Settings::default().layouts[self.settings.mode.index()];
-                self.settings.button_visibility = [0; 14];
+                self.settings.button_visibility = [0; 15];
                 if self.settings.imported_from.take().is_some() {
                     self.settings.custom_buttons.clear();
                     e.selected_custom = None;
@@ -287,11 +287,13 @@ impl TouchControls {
     }
 }
 fn palette_rect(index: usize) -> [f32; 4] {
+    // 15 controls fit two per row above the panel's bottom edge: rows start at
+    // 0.15 and step 0.105, so the eighth row ends at 0.15 + 7 * 0.105 + 0.08.
     [
         0.22 + (index % 2) as f32 * 0.29,
-        0.17 + (index / 2) as f32 * 0.11,
+        0.15 + (index / 2) as f32 * 0.105,
         0.27,
-        0.09,
+        0.08,
     ]
 }
 fn plate(b: &mut HudBatch, a: &HudAtlas, [x, y, w, h]: [f32; 4], label: &str, on: bool) {

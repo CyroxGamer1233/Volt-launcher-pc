@@ -182,10 +182,11 @@ impl Game<'_> {
     pub(super) fn draw_options(&mut self, batch: &mut HudBatch) {
         self.watch_pack_folder();
         self.sync_waypoint_ui_context();
-        horizon_client::volt_mods::sync_catalog_from_engine(
-            &mut self.settings.extras,
-            &self.settings.horizon,
-        );
+        // `apply_engine_from_catalog` runs once at load and `apply_mod_to_engine`
+        // keeps both sides in step from then on. Re-deriving the catalog from
+        // the engine flags every frame used to undo a mod the launcher switched
+        // off: the catalog it wrote in options.txt was overwritten on the next
+        // redraw, so the mod kept running.
         let mut ui = std::mem::take(&mut self.ui.options);
         ui.draw(&self.settings, batch, &self.gui.atlas, self.cursor);
         self.ui.options = ui;
@@ -221,6 +222,7 @@ impl Game<'_> {
         let now_typing = ui.typing();
         self.ui.options = ui;
         self.options_show_keyboard_on_focus(was_typing, now_typing);
+        self.options_close_keyboard_for_binding();
         self.handle_option_events(events)
     }
     /// Pops the soft keyboard when an options search box gains focus.
@@ -232,6 +234,14 @@ impl Game<'_> {
             self.android_show_keyboard();
         }
         let _ = (was_typing, now_typing);
+    }
+    /// Hides the native IME as soon as a keybinding starts capture: Winit
+    /// defers ordinary Android hardware keys to the IME while it is active.
+    fn options_close_keyboard_for_binding(&mut self) {
+        #[cfg(target_os = "android")]
+        if self.ui.options.selected_key.is_some() {
+            crate::platform::hide();
+        }
     }
     pub(super) fn options_drag(&mut self) -> Result<()> {
         let size = self.gui_size();
@@ -256,6 +266,7 @@ impl Game<'_> {
         let mut ui = std::mem::take(&mut self.ui.options);
         let events = ui.key(&mut self.settings, &self.gui.atlas, key, text);
         self.ui.options = ui;
+        self.options_close_keyboard_for_binding();
         self.handle_option_events(events)
     }
     /// Ctrl+A/C/V/X in the options' search boxes; false when none has focus.
@@ -622,8 +633,10 @@ impl Game<'_> {
                 limit = limit.min(cap.min(15));
             } else if self.title.is_some() || self.screen != super::Screen::Playing {
                 // Menus stay smooth while they are being used; the idle cap
-                // only applies after ten seconds without any input.
-                if idle_ms > 10_000 {
+                // only applies after ten seconds without any input. Hiding the
+                // HUD (the touch GUI button) is not a menu, so it never drops
+                // to the idle cap: the world is still being drawn.
+                if !self.ui.hide_gui && idle_ms > 10_000 {
                     if cap < limit {
                         reason = "IDLE-MENU";
                     }

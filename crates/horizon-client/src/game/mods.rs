@@ -14,6 +14,7 @@ use horizon_client::{
     mod_list,
 };
 use std::{path::PathBuf, time::Duration};
+
 #[cfg(feature = "mods")]
 use {
     super::Screen,
@@ -35,6 +36,17 @@ use {
     std::time::Instant,
     winit::{event::MouseButton, keyboard::KeyCode},
 };
+
+/// The Android mods watcher treats the first observation of `horizon-mods.txt`
+/// as a real state transition too. In particular, `None -> Some` can mean the
+/// file was created after startup, not just discovered there for the first time.
+#[cfg(any(target_os = "android", test))]
+pub(super) fn mods_file_stamp_changed(
+    previous: &Option<std::time::SystemTime>,
+    current: &Option<std::time::SystemTime>,
+) -> bool {
+    previous != current
+}
 
 #[derive(Default)]
 pub(super) struct ModsState {
@@ -431,7 +443,21 @@ impl Game<'_> {
     pub(super) fn mod_screen_key(&mut self, _key: winit::keyboard::KeyCode) -> bool {
         false
     }
+    pub(super) fn mod_screen_waiting_for_key(&self) -> bool {
+        false
+    }
     pub(super) fn mod_screen_scroll(&mut self, _delta: f32) {}
+}
+
+#[cfg(feature = "mods")]
+fn wanted_mod_ids(settings: &mod_list::ModList) -> Vec<&str> {
+    settings
+        .installed
+        .iter()
+        .enumerate()
+        .filter(|&(i, m)| m.native.is_none() && settings.is_on(i))
+        .map(|(_, m)| m.id.as_str())
+        .collect()
 }
 
 #[cfg(feature = "mods")]
@@ -562,15 +588,9 @@ impl Game<'_> {
             .filter(|e| e.status != Status::Off)
             .filter_map(|e| Some(e.manifest.as_ref()?.id.as_str()))
             .collect();
-        let wanted: Vec<&str> = self
-            .settings
-            .mods
-            .installed
-            .iter()
-            .enumerate()
-            .filter(|&(i, _)| self.settings.mods.is_on(i))
-            .map(|(_, m)| m.id.as_str())
-            .collect();
+        // `ModsState` contains only the sandboxed `.hmod` runtime. Native
+        // mods and Volt built-in switches are refreshed separately.
+        let wanted = wanted_mod_ids(&self.settings.mods);
         if running != wanted {
             self.start_mods();
         }
@@ -1037,6 +1057,13 @@ impl Game<'_> {
         };
         self.bind_mod_key(value.unwrap_or("key.keyboard.unknown").to_owned());
         true
+    }
+    /// Whether the in-game mod screen is capturing a physical key.
+    pub(super) fn mod_screen_waiting_for_key(&self) -> bool {
+        self.mods
+            .screen
+            .as_ref()
+            .is_some_and(|screen| screen.binding.is_some())
     }
     /// The layout the mod screen's widgets get at `h`: (widget, top,
     /// height), the column being `COLUMN` wide down the middle.
@@ -1515,6 +1542,45 @@ mod tests {
     use super::*;
     use horizon_client::mod_list::Installed;
     use std::io::Write;
+
+    #[test]
+    fn android_mod_watcher_treats_first_file_creation_as_a_change() {
+        let created = Some(std::time::SystemTime::UNIX_EPOCH + Duration::from_secs(1));
+        let absent = None;
+        assert!(!mods_file_stamp_changed(&absent, &absent));
+        assert!(mods_file_stamp_changed(&absent, &created));
+        assert!(!mods_file_stamp_changed(&created, &created));
+        assert!(mods_file_stamp_changed(&created, &absent));
+    }
+
+    #[cfg(feature = "mods")]
+    #[test]
+    fn runtime_sync_keeps_only_enabled_wasm_rows_and_always_keeps_dev_mods() {
+        let installed = |id: &str, dev, native| Installed {
+            id: id.into(),
+            title: id.into(),
+            description: String::new(),
+            problem: None,
+            dev,
+            has_settings: false,
+            native,
+        };
+        let mut settings = mod_list::ModList {
+            enabled: ["sandboxed".to_owned(), "native".to_owned()]
+                .into_iter()
+                .collect(),
+            installed: vec![
+                installed("sandboxed", false, None),
+                installed("native", false, Some(mod_list::NativePage::default())),
+                installed("dev", true, None),
+                installed("disabled", false, None),
+            ],
+            ..Default::default()
+        };
+        assert_eq!(wanted_mod_ids(&settings), vec!["sandboxed", "dev"]);
+        settings.enabled.remove("sandboxed");
+        assert_eq!(wanted_mod_ids(&settings), vec!["dev"]);
+    }
 
     /// A minimal `.hnmod` the registry accepts: its manifest and its mixin's.
     fn hnmod(dir: &std::path::Path, id: &str) {

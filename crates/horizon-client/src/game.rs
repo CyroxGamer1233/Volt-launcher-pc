@@ -14205,6 +14205,13 @@ impl Game<'_> {
             self.pad.touch.mounted = self.riding.is_some();
             self.pad.touch.shield_available = self.touch_shield_available();
             self.pad.touch.sneaking = self.keys.contains(&KeyCode::ShiftLeft);
+            // The Look button only exists while Freelook is enabled.
+            self.pad.touch.freelook_available = self.settings.extras.volt_qol.freelook_enabled
+                || self
+                    .settings
+                    .extras
+                    .mod_catalog
+                    .is_on(horizon_client::volt_mods::VoltModId::Freelook);
             self.pad.touch.break_progress = self.touch_mining_progress();
             // Pojav-style button background images go under the overlay
             // pass, so the stroke and label stay readable on top.
@@ -15399,6 +15406,7 @@ impl Game<'_> {
         }
         #[cfg(target_os = "android")]
         if matches!(&event,WindowEvent::KeyboardInput {event,..} if event.state==ElementState::Pressed && event.logical_key==winit::keyboard::Key::Named(winit::keyboard::NamedKey::BrowserBack))
+            && !self.android_waiting_for_binding()
         {
             if self.volt_studio_back() {
                 return;
@@ -15562,8 +15570,13 @@ impl Game<'_> {
                 );
                 self.tutorial
                     .mouse(f64::from(delta[0]), f64::from(delta[1]));
-                self.yaw += delta[0];
-                self.pitch = (self.pitch + delta[1]).clamp(-90.0, 90.0);
+                // Touch look takes the same route as the mouse: while freelook
+                // is on, the finger orbits the camera instead of turning the
+                // player, so movement heading and the server rotation stay put.
+                if !self.try_freelook_turn_degrees(delta[0], delta[1]) {
+                    self.yaw += delta[0];
+                    self.pitch = (self.pitch + delta[1]).clamp(-90.0, 90.0);
+                }
                 if self.pad.touch.chat_requested {
                     self.audio.play_button_click();
                     self.pad.touch.clear();
@@ -15582,6 +15595,9 @@ impl Game<'_> {
                         self.debug_key(KeyCode::F3, KeyAction::Press);
                         self.debug_key(KeyCode::F3, KeyAction::Release);
                     }
+                } else if std::mem::take(&mut self.pad.touch.freelook_requested) {
+                    self.audio.play_button_click();
+                    self.toggle_freelook_touch();
                 } else if std::mem::take(&mut self.pad.touch.perspective_requested) {
                     self.audio.play_button_click();
                     if let Err(error) = self.key_pressed(KeyCode::F5) {
@@ -15680,13 +15696,15 @@ impl Game<'_> {
         if let WindowEvent::ModifiersChanged(m) = &event {
             self.modifiers = m.state();
         }
+        let binding_capture = (self.screen == Screen::Options && self.options_waiting_for_key())
+            || (self.screen == Screen::Mod && self.mod_screen_waiting_for_key());
         // Fullscreen is a window shortcut, before screens consume keyboard input.
         if let WindowEvent::KeyboardInput { event, .. } = &event
             && event.state == ElementState::Pressed
             && let PhysicalKey::Code(key) = event.physical_key
             && horizon_client::keybinds::key_name(key)
                 == Some(self.settings.keys.get("key.fullscreen"))
-            && !(self.screen == Screen::Options && self.options_waiting_for_key())
+            && !binding_capture
         {
             self.last_input = Instant::now();
             if !event.repeat {
@@ -15699,6 +15717,7 @@ impl Game<'_> {
         // it works with chat, a sign or a book open.
         if let WindowEvent::KeyboardInput { event, .. } = &event
             && event.state == ElementState::Pressed
+            && !binding_capture
             && let PhysicalKey::Code(key) = event.physical_key
         {
             self.last_input = Instant::now();
@@ -15718,7 +15737,7 @@ impl Game<'_> {
                 (_, false) => KeyAction::Press,
                 (_, true) => KeyAction::Repeat,
             };
-            if self.debug_key(key, action) {
+            if !binding_capture && self.debug_key(key, action) {
                 return;
             }
         }
@@ -20064,7 +20083,16 @@ pub fn run() -> Result<()> {
             log::warn!("could not add the official server to servers.dat: {e}");
         }
     }
-    let early_settings = Settings::load(&std::env::current_dir()?.join("options.txt"));
+    let mut early_settings = Settings::load(&std::env::current_dir()?.join("options.txt"));
+    // The launcher's Mods tab writes `voltMod.<slug>` to `options.txt` and the
+    // switches to `horizon-mods.txt`; the engine flags those mods read were
+    // only ever written by the in-game page. Make the catalog it just wrote the
+    // authority once at load, so a mod switched off in the launcher is off in
+    // game too instead of running from a stale engine flag.
+    horizon_client::volt_mods::apply_engine_from_catalog(
+        &mut early_settings.extras,
+        &mut early_settings.horizon,
+    );
     // "Playing Horizon" on Discord: never for a server; an automated run only talks to a test's fake Discord.
     if options.dedicated.is_none() {
         let automated = options.benchmark.is_some()

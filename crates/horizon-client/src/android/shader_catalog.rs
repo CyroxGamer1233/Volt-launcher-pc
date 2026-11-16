@@ -21,6 +21,17 @@ impl Origin {
             Self::Both => "Both",
         }
     }
+
+    /// The shader catalog's source button cycles through the native registry
+    /// and both classic ZIP catalogs without taking extra space for four pills.
+    pub fn next_shader_source(self) -> Self {
+        match self {
+            Self::Horizon => Self::Modrinth,
+            Self::Modrinth => Self::CurseForge,
+            Self::CurseForge => Self::Both,
+            Self::Both => Self::Horizon,
+        }
+    }
 }
 
 fn version(versions: &[Version]) -> Option<&Version> {
@@ -242,6 +253,24 @@ mod tests {
             p,
         )
     }
+    #[test]
+    fn shader_source_cycle_reaches_every_catalog() {
+        let mut seen = Vec::new();
+        let mut source = Origin::Horizon;
+        for _ in 0..4 {
+            seen.push(source);
+            source = source.next_shader_source();
+        }
+        let expected = [
+            Origin::Horizon,
+            Origin::Modrinth,
+            Origin::CurseForge,
+            Origin::Both,
+        ];
+        assert_eq!(seen.as_slice(), expected.as_slice());
+        assert_eq!(source, Origin::Horizon);
+    }
+
     #[test]
     fn version_prefers_current_game_then_newest_zip_and_skips_blocked_files() {
         let (f, _) = fixture();

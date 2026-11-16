@@ -53,14 +53,31 @@ pub struct Manifest {
     /// is dropped instead of refusing the whole pack, so the pack installs
     /// and renders what it can.
     pub compat: bool,
+    /// WGSL files the pack ships for stages this API line does not draw yet
+    /// (`[vertex]`, `[weather]`, `[shadow]`, `[reflection]`, `[[materials]]`,
+    /// `[[textures]]`). Carried so the pack installs whole and a newer API can
+    /// draw them; not run here.
+    pub extra_stages: Vec<String>,
+    /// Option ids driven by `[shadow]` and `[reflection]` rather than by a
+    /// compiled stage's `override`. `check` counts them as used.
+    pub extra_options: Vec<String>,
 }
 
 /// One stage: the WGSL file that defines its function.
+///
+/// Unknown keys are *ignored*, not refused. Published packs in the registry
+/// carry keys this reader does not use (one port ships `fog = false` in its
+/// `[[post]]` blocks), and `deny_unknown_fields` turned every one of those into
+/// a hard "TOML parse error ... unknown field ... expected `file` or `name`",
+/// which failed the whole download with nothing usable on screen. Vanilla
+/// resource packs ignore keys they do not know; so does this.
 #[derive(Clone, Debug, Deserialize, PartialEq)]
-#[serde(deny_unknown_fields)]
 pub struct Stage {
     pub file: String,
-    /// WGSL files put before `file`, after the shared ones, for this stage only.
+    /// More WGSL this stage compiles beside `file`, for a pack that keeps its
+    /// lighting and water passes in files of their own (Daybreak, Volexstorm,
+    /// Pastel Mystic do). Without this the pack was refused as shipping files
+    /// "not used by any stage or in shared".
     #[serde(default)]
     pub files: Vec<String>,
     /// Shown in the GPU time overlay; the file name when absent.
@@ -103,8 +120,14 @@ pub struct Budget {
     pub gpu_ms: Option<f32>,
 }
 
+// Tolerant at the top level too, like `Stage` and `RawOption` below: the
+// registry's real shader packs declare whole tables this API does not read
+// yet (`[vertex]`, `[weather]`, `[shadow]`, `[reflection]`, `[[materials]]`,
+// `[[lights]]`) and put extra keys inside the ones it does (`fog` in
+// `[material]`, `output`/`scale` in `[[post]]`). With `deny_unknown_fields`
+// here every one of those packs failed to install with
+// "unknown field `vertex`", so no shader could be downloaded at all.
 #[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
 struct Raw {
     schema: u32,
     id: String,
@@ -118,6 +141,10 @@ struct Raw {
     license: Option<String>,
     #[serde(default)]
     shared: Vec<String>,
+    /// Metadata used by some third-party shader formats; this API does not
+    /// implement the light declarations, but it can still read the stages.
+    #[serde(default)]
+    lights: Option<toml::Value>,
     sky: Option<Stage>,
     material: Option<Stage>,
     #[serde(default)]
@@ -128,10 +155,80 @@ struct Raw {
     pages: Vec<RawPage>,
     #[serde(default)]
     budget: RawBudget,
+    /// Stages published packs declare that this API line does not draw yet.
+    /// They are read only so their WGSL counts as used: a pack that ships
+    /// `vertex.wgsl` or `weather.wgsl` used to be refused with "not used by
+    /// any stage", which blocked every real pack in the registry.
+    #[serde(default)]
+    vertex: Option<RawFileStage>,
+    #[serde(default)]
+    weather: Option<RawFileStage>,
+    #[serde(default)]
+    shadow: Option<RawShadow>,
+    #[serde(default)]
+    reflection: Option<RawReflection>,
+    #[serde(default)]
+    materials: Vec<RawFileStage>,
+    /// `[[textures]]`: images stages sample this API line does not bind yet.
+    /// Their files are carried so a pack that ships them installs whole.
+    #[serde(default)]
+    textures: Vec<RawFileStage>,
+    /// Metadata tables with no files of their own: `[[particle_lights]]`,
+    /// `[[tags]]`. Ignored, but not refused.
+    #[serde(default)]
+    particle_lights: Vec<toml::Value>,
+    #[serde(default)]
+    tags: Vec<toml::Value>,
 }
 
+/// `[shadow]`: the shadow map. This API line draws none, but the table names
+/// the options that drive one (`option`, `resolution_option`, `distance_option`),
+/// and those options must count as used or the pack fails its check with
+/// "option `shadow_resolution`: no stage declares" and cannot install.
 #[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
+struct RawShadow {
+    #[serde(default)]
+    file: Option<String>,
+    #[serde(default)]
+    option: Option<String>,
+    #[serde(default)]
+    resolution_option: Option<String>,
+    #[serde(default)]
+    distance_option: Option<String>,
+}
+
+impl RawShadow {
+    /// The option ids this table drives.
+    fn options(&self) -> impl Iterator<Item = &String> {
+        [&self.option, &self.resolution_option, &self.distance_option]
+            .into_iter()
+            .flatten()
+    }
+}
+
+/// `[reflection]`: names the option that turns the reflection pass on.
+#[derive(Deserialize)]
+struct RawReflection {
+    #[serde(default)]
+    file: Option<String>,
+    #[serde(default)]
+    option: Option<String>,
+}
+
+/// A `[vertex]`/`[weather]`/`[[materials]]`/`[[textures]]` table.
+///
+/// Tolerant like `Stage`: only a `file` is of any use here, and most of these
+/// tables have none (`[reflection]` names an `option`, `[[materials]]` an `id`
+/// and its `sprites`), so requiring one would refuse the pack again.
+#[derive(Deserialize)]
+struct RawFileStage {
+    #[serde(default)]
+    file: Option<String>,
+}
+
+// Tolerant on purpose: an option key from a newer schema must not make a
+// whole pack uninstallable.
+#[derive(Deserialize)]
 struct RawOption {
     id: String,
     name: String,
@@ -152,8 +249,8 @@ struct RawBudget {
     gpu_ms: Option<f64>,
 }
 
+// Tolerant like `RawOption`: unknown layout keys are carried, not refused.
 #[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
 struct RawPage {
     id: String,
     name: String,
@@ -295,6 +392,10 @@ impl Manifest {
 
     fn parse_strict(text: &str) -> Result<Manifest, String> {
         let raw: Raw = toml::from_str(text).map_err(|e| format!("{MANIFEST}: {e}"))?;
+        // Kept as opaque TOML above so third-party `[[lights]]` declarations
+        // do not block otherwise-compatible stages. The current shader API
+        // doesn't consume this metadata.
+        let _ignored_light_metadata = &raw.lights;
         let err = |e: String| format!("{MANIFEST}: {e}");
         if raw.schema != SCHEMA {
             return Err(err(format!(
@@ -331,8 +432,11 @@ impl Manifest {
             )));
         }
         let stages = raw.sky.iter().chain(&raw.material).chain(&raw.post);
-        let stage_files = stages.flat_map(|s| s.files.iter().chain(Some(&s.file)));
-        for file in raw.shared.iter().chain(stage_files) {
+        for file in raw
+            .shared
+            .iter()
+            .chain(stages.flat_map(|s| std::iter::once(&s.file).chain(&s.files)))
+        {
             if !crate::package::plain_path(file) || !file.ends_with(".wgsl") {
                 return Err(err(format!("{file:?} is not a plain path to a .wgsl file")));
             }
@@ -361,6 +465,28 @@ impl Manifest {
             }
             ms => ms.map(|ms| ms as f32),
         };
+        // Collected before the struct is built: these stages are not drawn
+        // yet, only kept so their files pass the package's "used" check.
+        let extra_stages: Vec<String> = raw
+            .vertex
+            .iter()
+            .chain(raw.weather.iter())
+            .filter_map(|s| s.file.clone())
+            .chain(raw.shadow.iter().filter_map(|s| s.file.clone()))
+            .chain(raw.reflection.iter().filter_map(|s| s.file.clone()))
+            .chain(raw.materials.iter().filter_map(|s| s.file.clone()))
+            .chain(raw.textures.iter().filter_map(|s| s.file.clone()))
+            .collect();
+        // The options a shadow or reflection pass drives: their `override`
+        // lives in WGSL this API line does not compile, so `check` would
+        // refuse the pack as declaring an option no stage uses.
+        let extra_options: Vec<String> = raw
+            .shadow
+            .iter()
+            .flat_map(RawShadow::options)
+            .chain(raw.reflection.iter().filter_map(|r| r.option.as_ref()))
+            .cloned()
+            .collect();
         Ok(Manifest {
             id: raw.id,
             name: raw.name,
@@ -377,6 +503,8 @@ impl Manifest {
             pages,
             budget: Budget { gpu_ms },
             compat: false,
+            extra_stages,
+            extra_options,
         })
     }
 
@@ -477,6 +605,11 @@ impl Manifest {
             pages,
             budget: Budget { gpu_ms },
             compat: true,
+            // Compatibility mode has already dropped the stages this build
+            // can't serve, and `check`/`package` relax their "used" rules for
+            // a compat pack, so nothing needs carrying here.
+            extra_stages: Vec::new(),
+            extra_options: Vec::new(),
         })
     }
 
@@ -484,8 +617,12 @@ impl Manifest {
     pub fn files(&self) -> Vec<&str> {
         let mut files: Vec<&str> = Vec::new();
         let stages = self.sky.iter().chain(&self.material).chain(&self.post);
-        let named = stages.flat_map(|s| s.files.iter().chain(Some(&s.file)));
-        for file in self.shared.iter().chain(named) {
+        for file in self
+            .shared
+            .iter()
+            .chain(stages.flat_map(|s| std::iter::once(&s.file).chain(&s.files)))
+            .chain(self.extra_stages.iter())
+        {
             if !files.contains(&file.as_str()) {
                 files.push(file);
             }

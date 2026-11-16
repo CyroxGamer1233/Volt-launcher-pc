@@ -249,6 +249,10 @@ pub struct VoltBoostPlusConfig {
     pub offscreen_entity_skip: bool,
     /// `#6` Smooths mobile frame pacing to reduce thermal spikes on Mali/Adreno GPUs.
     pub smart_frame_pacer: bool,
+    /// Draws item frames and glow item frames from any distance, ignoring
+    /// both the 1024-block draw distance and the view frustum. Only framed
+    /// items are affected; every other entity keeps its own culling.
+    pub frame_items_loader: bool,
 }
 
 // ============================================================================

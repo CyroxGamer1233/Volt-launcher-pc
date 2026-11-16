@@ -193,4 +193,3 @@ pub fn inspect_custom_vulkan_driver(
         Err("Custom Vulkan drivers are not supported on macOS".to_owned())
     }
 }
-

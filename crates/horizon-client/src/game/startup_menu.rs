@@ -578,6 +578,19 @@ impl Loading {
         }
     }
 
+    #[cfg(target_os = "android")]
+    fn menu_capture_touch_key(&mut self, key: KeyCode) -> bool {
+        if !self.menu.options_open || self.menu.options.selected_key.is_none() {
+            return false;
+        }
+        let Some(gui) = &self.gui else {
+            return false;
+        };
+        let events = self.menu.options.key(&mut self.settings, &gui.atlas, key, None);
+        self.menu_option_events(events);
+        true
+    }
+
     fn menu_options_click(&mut self, drag: bool, right: bool) {
         let size = self.menu_size();
         let batch = HudBatch::new(size);
@@ -592,6 +605,10 @@ impl Loading {
             drag,
             right,
         );
+        #[cfg(target_os = "android")]
+        if self.menu.options.selected_key.is_some() {
+            crate::platform::hide();
+        }
         self.menu_option_events(events);
     }
 
@@ -892,7 +909,9 @@ impl Loading {
                         }
                         Action::More => self.menu.touch.expanded = !self.menu.touch.expanded,
                         Action::Keyboard => {
-                            if crate::platform::active() {
+                            if self.menu.options.selected_key.is_some() || crate::platform::active() {
+                                // The IME produces text, not a physical keycode
+                                // the binding picker can store.
                                 crate::platform::hide();
                             } else {
                                 let initial = self
@@ -907,20 +926,22 @@ impl Loading {
                                 crate::platform::show(&initial);
                             }
                         }
-                        Action::Key(KeyCode::Escape) => {
-                            crate::platform::hide();
-                            if self.menu.options_open {
-                                if let Some(gui) = self.gui.as_ref() {
-                                    let events = self.menu.options.key(
-                                        &mut self.settings,
-                                        &gui.atlas,
-                                        KeyCode::Escape,
-                                        None,
-                                    );
-                                    self.menu_option_events(events);
+                        Action::Key(key) => {
+                            if !self.menu_capture_touch_key(key) && key == KeyCode::Escape {
+                                crate::platform::hide();
+                                if self.menu.options_open {
+                                    if let Some(gui) = self.gui.as_ref() {
+                                        let events = self.menu.options.key(
+                                            &mut self.settings,
+                                            &gui.atlas,
+                                            KeyCode::Escape,
+                                            None,
+                                        );
+                                        self.menu_option_events(events);
+                                    }
+                                } else if let Some(t) = &mut self.menu.title {
+                                    t.escape();
                                 }
-                            } else if let Some(t) = &mut self.menu.title {
-                                t.escape();
                             }
                         }
                         _ => {}
@@ -965,8 +986,15 @@ impl Loading {
                     position: touch.location,
                 },
             )?;
-            if self.menu.touch.direct_pointer(touch.id, p, touch.phase) {
-                if touch.phase != TouchPhase::Moved {
+            let waiting_for_binding =
+                self.menu.options_open && self.menu.options.selected_key.is_some();
+            if let Some(allow_mouse_click) = self.menu.touch.direct_pointer_with_mouse(
+                touch.id,
+                p,
+                touch.phase,
+                !waiting_for_binding,
+            ) {
+                if allow_mouse_click && touch.phase != TouchPhase::Moved {
                     self.menu_event(
                         event_loop,
                         WindowEvent::MouseInput {
@@ -982,10 +1010,11 @@ impl Loading {
                 }
                 return Ok(());
             }
-            match self.menu.touch.gesture(
+            match self.menu.touch.gesture_with_tap(
                 touch.id,
                 [touch.location.x as f32, touch.location.y as f32],
                 touch.phase,
+                !waiting_for_binding,
             ) {
                 Gesture::Tap => {
                     let field = crate::platform::field_at(p);
@@ -1177,7 +1206,9 @@ impl Loading {
                 }
             }
             WindowEvent::KeyboardInput { event, .. } if event.state == ElementState::Pressed => {
-                if event.physical_key == PhysicalKey::Code(KeyCode::F11) {
+                if event.physical_key == PhysicalKey::Code(KeyCode::F11)
+                    && self.menu.options.selected_key.is_none()
+                {
                     self.settings.fullscreen = !self.settings.fullscreen;
                     self.apply_menu_settings();
                     self.save_menu_settings();
@@ -1187,11 +1218,12 @@ impl Loading {
                     };
                     let shortcut = self.menu.shortcut(&event);
                     let atlas = &gui.atlas;
-                    let handled = shortcut.is_some_and(|s| {
-                        self.menu
-                            .options
-                            .shortcut(atlas, s, &mut self.menu.clipboard)
-                    });
+                    let handled = self.menu.options.selected_key.is_none()
+                        && shortcut.is_some_and(|s| {
+                            self.menu
+                                .options
+                                .shortcut(atlas, s, &mut self.menu.clipboard)
+                        });
                     if !handled && let PhysicalKey::Code(key) = event.physical_key {
                         let events = self.menu.options.key(
                             &mut self.settings,
@@ -1199,6 +1231,10 @@ impl Loading {
                             key,
                             event.text.as_deref(),
                         );
+                        #[cfg(target_os = "android")]
+                        if self.menu.options.selected_key.is_some() {
+                            crate::platform::hide();
+                        }
                         self.menu_option_events(events);
                     }
                 } else {

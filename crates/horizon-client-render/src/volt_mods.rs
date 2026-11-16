@@ -339,7 +339,7 @@ pub const CATALOG: [VoltModMeta; TOTAL_VOLT_MODS] = [
         category: VoltModCategory::PvpUtility,
         default_on: false,
         summary: "Client-safe 360° orbit camera without altering movement heading.",
-        description: "Hold the Freelook key (Left Alt / touch button) to orbit the camera 360° around your character while sprinting, bridging, or flying without changing server rotation packets.",
+        description: "Hold the Freelook key (Left Alt), or tap the on-screen Look button, to orbit the camera 360° around your character while sprinting, bridging, or flying without changing server rotation packets.",
     },
     VoltModMeta {
         id: VoltModId::Zoomify,
@@ -1815,6 +1815,29 @@ pub fn apply_mod_to_engine(id: VoltModId, on: bool, extras: &mut Extras, horizon
         VoltModId::XaerosMinimap => extras.minimap = on,
         VoltModId::XaerosWorldMap => extras.volt_qol.atlas_enabled = on,
         _ => {}
+    }
+}
+
+/// Pushes the mods the player actually chose into their engine flags.
+///
+/// The launcher's Mods tab only has the catalog to write (`options.txt`'s
+/// `voltMod.*` keys), while the in-game checks read both the catalog and a
+/// separate engine flag as `flag || catalog.is_on(..)`. With the flag left at
+/// its old value, a mod switched off in the launcher kept working in game -
+/// the reported "turned off in the launcher, still running in game".
+///
+/// Only mods whose catalog entry differs from its default are applied. A mod
+/// nobody has touched keeps the engine flag it already had, so a default of
+/// `true` in the catalog cannot silently switch on a renderer feature that
+/// ships off (`Graphics::default().entity_culling` is `false` while
+/// EntityCulling defaults on). `Extras` only writes the non-default keys, so
+/// "differs from its default" is exactly "the player set it".
+pub fn apply_engine_from_catalog(extras: &mut Extras, horizon: &mut Graphics) {
+    for id in VoltModId::ALL {
+        let on = extras.mod_catalog.is_on(id);
+        if on != id.meta().default_on {
+            apply_mod_to_engine(id, on, extras, horizon);
+        }
     }
 }
 
