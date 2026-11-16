@@ -14227,6 +14227,11 @@ impl Game<'_> {
                 && self.pad.touch.editor.is_none()
                 && !self.volt_studio_open()
             {
+                // A row is waiting for a key: open the key grid, so the keys a
+                // tap can produce are on screen instead of behind "...".
+                if self.android_waiting_for_binding() {
+                    self.pad.touch_ui.expanded = true;
+                }
                 self.pad
                     .touch_ui
                     .draw(&mut hud, &self.gui.atlas, self.pad_in_menu());

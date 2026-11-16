@@ -222,14 +222,18 @@ impl Game<'_> {
         let state = {
             self.pad.touch.shield_available = self.touch_shield_available();
             let mut touch = self.pad.touch.poll_state();
-            self.pad.touch_shield = crate::touch_visible()
-                && !self.pad_in_menu()
-                && self.touch_shield_available()
-                && if self.settings.touch.shield_button {
-                    self.pad.touch.shield_held()
-                } else {
-                    self.pad.touch.sneaking || touch.held(Button::RightStick)
-                };
+            // A raise is always an explicit one. With the shield button laid
+            // out it is that button; otherwise the use press is the only
+            // raise, the way `playerHasBlockingItemUseIntent` counts a use.
+            // Crouching is never a raise: see `TouchControls::shield_raised`.
+            let in_menu = self.pad_in_menu();
+            let use_pressed = touch.held(Button::LeftTrigger);
+            self.pad.touch_shield = self.pad.touch.shield_raised(
+                use_pressed,
+                in_menu,
+                crate::touch_visible(),
+            );
+
             if self.pad.touch_shield {
                 touch.triggers[0] = 1.0;
             }

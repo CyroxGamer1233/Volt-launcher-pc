@@ -655,6 +655,34 @@ mod tests {
         ));
     }
     #[test]
+    fn the_key_grid_offers_every_key_a_binding_can_take_once_expanded() {
+        // The grid is where a tap becomes a KeyCode, so a row waiting for a
+        // binding needs it open: OptionsUi forces `expanded` while it waits.
+        let mut u = TouchUi::default();
+        // Collapsed, "..."/More is the only header button that yields a key.
+        assert!(matches!(
+            u.action(480.0, 240.0, [10.0, 10.0], true),
+            Some(Action::More)
+        ));
+        assert!(u.action(480.0, 240.0, [10.0, 40.0], true).is_none());
+        u.expanded = true;
+        // Every drawn tile maps to a key, a debug combo or the F3 latch.
+        for row in 0..7 {
+            for col in 0..4 {
+                let p = [3.0 + col as f32 * 50.0 + 10.0, 27.0 + row as f32 * 24.0 + 10.0];
+                assert!(
+                    u.action(480.0, 240.0, p, true).is_some(),
+                    "tile {row},{col} produced no action"
+                );
+            }
+        }
+        // A key tap yields the arrow keys the binding picker stores.
+        assert!(matches!(
+            u.action(480.0, 240.0, [13.0, 37.0], true),
+            Some(Action::Key(_))
+        ));
+    }
+    #[test]
     fn slider_touch_does_not_synthesize_mouse_edges_during_key_capture() {
         let mut u = TouchUi::default();
         u.pointer_drag = Some((1, false));

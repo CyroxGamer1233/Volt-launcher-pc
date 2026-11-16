@@ -346,3 +346,44 @@ in every menu. It is now `option_limit.min(60)`, so a player who chose 30 keeps
 in all GUIs" was: not the Dynamic FPS mod, which only engages after 35 s without
 input or when unfocused. The Volt idle-menu cap (after 10 s idle) also skips the
 hidden-HUD state now, since hiding the HUD is not a menu.
+
+## Volt 1.1.1 follow-up — crouch no longer raises the shield, status bar, tap-to-bind
+
+**Crouching raised the shield.** `Game::poll_pads` gated the touch shield on
+`if s.touch.shield_button { shield_held() } else { sneaking || held(RightStick) }`.
+`shield_button` defaults to `false`, and `Control::Sneak` is mapped to
+`Button::RightStick` (`touch::TouchControls::button`), which is also the pad's
+stick click — so every crouch, toggle or stick click set `pad.touch_shield` and
+`remote_use_hands` raised the off hand. Vanilla is the other way round:
+`playerHasBlockingItemUseIntent` suppresses an off-hand shield while sneaking.
+The decision now lives in `TouchControls::shield_raised(use_pressed, in_menu,
+touch_visible)`: no raise while `sneaking`, and without a Shield button on the
+HUD only the Use press (`Button::LeftTrigger`) raises. `crouching_never_raises_the_shield`
+covers the full truth table. Note that `triggers[0]` is still forced to 1.0
+while the shield is up, which is what `use_entity`/`use_block` check to skip the
+main hand.
+
+**The status bar corrupted menu text.** `targetSdk 35` means Android 15+ forces
+edge-to-edge, so the system status bar is composited over the game surface:
+`HorizonActivity` extends `NativeActivity`, whose default decor no longer
+reserves that strip. The "Volt Mods" title bar and the `Mouse`/`Back` header
+buttons were drawn into the same rows as the clock and battery. The activity now
+hides the status and navigation bars in `onCreate` and again on
+`onWindowFocusChanged` (API 30+ `WindowInsetsController.hide`, older
+`SYSTEM_UI_FLAG_IMMERSIVE_STICKY`), and sets
+`LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES`. `setDecorFitsSystemWindows` is left
+alone on purpose so the manifest's `adjustResize` still shrinks the view for the
+soft keyboard.
+
+**Tapping a bind did not set it.** `OptionsUi::key` and `bind_key` were already
+correct; the problem was producing a `KeyCode` on a phone. The only taps that
+carry one are the touch HUD's key grid (`touch_ui::KEYS`, `action()`), which is
+collapsed until "..." is pressed and sits at `y = 3..23`, exactly under the
+status bar. While a row waits, the render path now forces
+`touch_ui.expanded = true`, and `Action::Key` no longer collapses the grid
+during capture. `options_mouse` sends every screen tap through
+`click(drag = false)`, and `android_aux_touch` resolves HUD grid taps *before*
+that, so a grid key is consumed as a key rather than a mouse press. Nothing in
+`OptionsUi` needed changing; the missing piece was reachability. A tap on the
+virtual mouse's LMB/RMB (`Action::MouseButton`) also binds through
+`options_waiting_for_key` -> `bind_mouse`, for a row that wants a mouse button.
