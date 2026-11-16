@@ -89,19 +89,6 @@ compiled client and are not supported on Android yet. Fabric/Forge Java code
 does not run in this client. Server and anticheat
 compatibility requires testing on the actual server.
 
-## 🎮 In game
-
-Once Play is pressed, this is the client Volt runs. Captured on a POCO M8 Pro ·
-16 chunks · Fancy graphics.
-
-| **Joystick and crosshair** | **D-pad and touch aiming** |
-| --- | --- |
-| ![Fox in a forest with joystick controls](docs/media/android/joystick-fox.png) | ![River and forest with D-pad controls](docs/media/android/dpad-river.png) |
-
-| **Snowy biome** | **Hypixel Arcade · Java multiplayer** |
-| --- | --- |
-| ![Snowy landscape on Android](docs/media/android/snow-landscape.png) | ![Hypixel Arcade lobby on Android](docs/media/android/hypixel-arcade.png) |
-
 
 
 ---
