@@ -111,7 +111,26 @@ jobs:
               out.write(f"multi_abi={'true' if len(include) > 1 else 'false'}\n")
           PY
       - name: Validate Volt Shaders WGSL & Shader API
-        run: cargo test -p horizon-shader-api
+        # Diagnostics go out as workflow annotations: raw job logs are not
+        # always downloadable through the API, annotations always are.
+        run: |
+          set -o pipefail
+          if ! cargo test -p horizon-shader-api 2>&1 | tee shader-api-test.log; then
+            python3 - <<'PY'
+          lines = open('shader-api-test.log', errors='replace').read().splitlines()
+          keep = []
+          for i, line in enumerate(lines):
+              s = line.lstrip()
+              if s.startswith(('error[', 'error:')) or 'panicked at' in s or s.startswith('---- '):
+                  keep.extend(lines[max(i - 1, 0):i + 10])
+              elif s.startswith('test result: FAILED') or s.startswith('failures:'):
+                  keep.extend(lines[i:i + 20])
+          text = '\n'.join(keep[:220]) or '\n'.join(lines[-60:])
+          safe = text[:18000].replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
+          print('::error title=horizon-shader-api test diagnostics::' + safe)
+          PY
+            exit 1
+          fi
 
   worldgen-test:
     name: Worldgen mod tests (host)

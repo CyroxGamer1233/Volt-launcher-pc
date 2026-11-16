@@ -206,58 +206,21 @@ fn the_smallest_manifest() {
 }
 
 #[test]
-fn refuses_what_this_build_does_not_read() {
+fn refuses_what_no_mode_reads() {
     let text = sample_text();
     let cases = [
         (text.replace("schema = 1", "schema = 2"), "schema 2"),
         (
-            text.replace("api = \"0.1\"", "api = \"0.2\""),
-            "shader API 0.2",
-        ),
-        (
             text.replace("\"sample_pack\"", "\"Sample\""),
             "is not [a-z0-9_]",
         ),
-        (
-            text.replace("gpu_ms = 1.5", "gpu_ms = 40.0"),
-            "budget.gpu_ms",
-        ),
-        (
-            text.replace("\"common.wgsl\"", "\"../common.wgsl\""),
-            "not a plain path",
-        ),
-        (
-            text.replace("\"sky.wgsl\"", "\"sky.glsl\""),
-            "not a plain path to a .wgsl",
-        ),
-        (
-            text.replace("id = \"samples\"", "id = \"vignette\""),
-            "declared twice",
-        ),
-        (
-            text.replace("id = \"samples\"", "id = \"horizon_samples\""),
-            "WGSL identifier",
-        ),
-        (
-            text.replace("default = \"Soft\"", "default = \"Hard\""),
-            "one of the values",
-        ),
-        (
-            text.replace("default = 1.1", "default = 3.0"),
-            "default in [0, 2]",
-        ),
-        (
-            text.replace("default = 4", "default = 4.5"),
-            "not a 32-bit integer",
-        ),
-        (
-            text.replace("type = \"bool\"", "type = \"color\""),
-            "is not bool",
-        ),
-        (
-            text.replace("default = true", "default = true\nmin = 0"),
-            "doesn't apply",
-        ),
+        (text.replace("name = \"Sample Pack\"", "name = \" \""), "name"),
+        // Everything else a strict read refuses (an over-budget gpu_ms, a
+        // non-WGSL stage file, a duplicate or malformed option) is carried by
+        // compatibility mode instead: the bad piece is clamped or dropped and
+        // the pack still installs - see
+        // `reads_newer_manifests_in_compatibility_mode` and
+        // `strict_errors_survive_when_compat_cannot_carry_the_pack`.
     ];
     for (text, needle) in cases {
         let e = refused(&text);
@@ -266,8 +229,77 @@ fn refuses_what_this_build_does_not_read() {
     }
     let no_stage = "schema = 1\nid = \"p\"\nname = \"P\"\nversion = \"1\"\napi = \"0.1\"\n";
     assert!(refused(no_stage).contains("no stage"));
+}
+
+/// A pack within this build's API surface is read strictly: a manifest that
+/// oversteps it is refused with the error the strict reader found, unless
+/// compatibility mode (below) can carry it.
+#[test]
+fn strict_errors_survive_when_compat_cannot_carry_the_pack() {
+    // Every stage names a file that is no plain .wgsl path: compat drops
+    // them all and the strict error comes back.
+    let text = sample_text()
+        .replace("\"sky.wgsl\"", "\"sky.glsl\"")
+        .replace("\"material.wgsl\"", "\"material.glsl\"")
+        .replace("\"post/grade.wgsl\"", "\"post/grade.glsl\"")
+        .replace("\"post/vignette.wgsl\"", "\"post/vignette.glsl\"");
+    let e = refused(&text);
+    assert!(e.contains("not a plain path to a .wgsl"), "{e}");
+}
+
+/// A manifest written for a newer line of the API (keys this build doesn't
+/// read, a newer `api`, more post passes, options it can't serve) is read in
+/// compatibility mode: what fits is kept, what doesn't is dropped, and
+/// `Manifest::compat` says so.
+#[test]
+fn reads_newer_manifests_in_compatibility_mode() {
+    let text = sample_text();
+    let strict = Manifest::parse(&text).unwrap();
+    assert!(!strict.compat);
+
+    let newer_api = Manifest::parse(&text.replace("api = \"0.1\"", "api = \"0.2\"")).unwrap();
+    assert!(newer_api.compat && newer_api.api == "0.2");
+    assert_eq!(newer_api.files(), strict.files());
+
+    // An unknown key alone no longer needs compatibility mode: the strict
+    // reader ignores it, like vanilla resource packs ignore unknown keys.
+    let unknown_key =
+        Manifest::parse(&text.replace("license = \"MIT\"", "licence = \"MIT\"")).unwrap();
+    assert!(!unknown_key.compat && unknown_key.license.is_none());
+
+    // A sky with newer per-stage keys, a `[shadow]` table and bundled
+    // textures: the strict reader carries them whole, their files counted
+    // as used through `extra_stages`.
+    let newer_stages = text.replace(
+        "[sky]\nfile = \"sky.wgsl\"",
+        "[shadow]\nresolution = 2048\n\n[[textures]]\nid = \"noise\"\nfile = \"noise.png\"\n\n\
+         [sky]\nfile = \"sky.wgsl\"\nfiles = [\"common.wgsl\"]\nclouds = false",
+    );
+    let m = Manifest::parse(&newer_stages).unwrap();
+    assert!(!m.compat);
+    assert_eq!(m.sky.as_ref().unwrap().files, ["common.wgsl"]);
+    assert!(m.extra_stages.iter().any(|f| f == "noise.png"));
+    // A post pass that names a buffer this build doesn't carry still runs
+    // in the main chain: the key is ignored, the pass kept.
+    let with_output = newer_stages.replace(
+        "file = \"post/vignette.wgsl\"",
+        "file = \"post/vignette.wgsl\"\noutput = \"ta\"",
+    );
+    let m = Manifest::parse(&with_output).unwrap();
+    let post: Vec<_> = m.post.iter().map(|s| s.file.as_str()).collect();
+    assert_eq!(post, ["post/grade.wgsl", "post/vignette.wgsl"]);
+
+    // More post passes than the strict cap, an over-budget gpu_ms and an
+    // option this build can't read: carried, clamped and dropped.
+    let no_stage = "schema = 1\nid = \"p\"\nname = \"P\"\nversion = \"1\"\napi = \"0.1\"\n";
     let many = (0..9).map(|i| format!("[[post]]\nfile = \"p{i}.wgsl\"\n"));
-    assert!(refused(&format!("{no_stage}{}", many.collect::<String>())).contains("9 post passes"));
+    let m = Manifest::parse(&format!("{no_stage}{}", many.collect::<String>())).unwrap();
+    assert!(m.compat && m.post.len() == 9);
+    let m = Manifest::parse(&text.replace("gpu_ms = 1.5", "gpu_ms = 40.0")).unwrap();
+    assert!(m.compat && m.budget.gpu_ms == Some(16.0));
+    let m = Manifest::parse(&text.replace("type = \"bool\"", "type = \"color\"")).unwrap();
+    assert!(m.compat);
+    assert!(m.options.iter().all(|o| o.id != "vignette"));
 }
 
 #[test]

@@ -49,7 +49,7 @@ against this repository; every item behaves as the original does.
 | Indirect-draw offset handling | Present | Bypass/fix equivalent to HA 0.7.7. |
 | Vulkan separate opaque/cutout | Present (cutout path in `gfx`) | HA's split was measured here too (`gpu_times`); kept where it wins. |
 | Deferred GL world-renderer init | Not applicable | This engine is Vulkan-only by directive; the deferred init is a GL-backend fix. |
-| Serious server support | Present | Vanilla-brand handshake, chat, skins/capes; same protocol scope as upstream. |
+| Serious server support | Present | Vanilla-brand handshake, chat, skins/capes; same protocol scope as upstream. The client's join is byte-for-byte vanilla on public servers: no `horizon:mod_net` hello unless the host announces it first, no `volt:skin` payload off Horizon hosts, and the SkinsRestorer `/skin` sync waits for the player's own input so auth/captcha plugins (AuthMe, Sonar, nAntiBot) see nothing bot-like. |
 | Shader packs | Present (data-only packs, `docs/SHADER-AUDIT.md`) | Policy stricter than upstream: no downloaded native code. |
 | Phone-compiled native mods | Intentionally different | No on-device compiler by policy (`docs/HNMOD-DECISION.md`); mods are woven into the APK by CI instead. |
 | `immersive` default | Ours: on; upstream: off | Upstream turned it off over device-specific freeze reports; Volt keeps the immersive full-screen default and exposes the toggle in Settings. |

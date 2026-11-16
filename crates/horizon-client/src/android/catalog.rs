@@ -4,7 +4,6 @@ use serde::{Deserialize, Serialize};
 use std::{
     path::{Path, PathBuf},
     sync::{Arc, Mutex, mpsc},
-    time::Instant,
 };
 /// The manifest id inside an installed `.hmod` package, if readable.
 fn read_hmod_id(path: &std::path::Path) -> Option<String> {
@@ -289,30 +288,8 @@ impl Page {
 pub struct ProjectIcon {
     pub hash: u64,
     pub rgba: Vec<u8>,
-    pub loaded_at: Instant,
+    pub loaded_at: std::time::Instant,
 }
-
-/// A decoded local or catalog image ready for the launcher atlas.
-#[derive(Clone)]
-pub struct PreviewImage {
-    pub hash: u64,
-    pub width: u32,
-    pub height: u32,
-    pub rgba: Vec<u8>,
-    pub loaded_at: Instant,
-}
-
-/// The content shown by the shared fullscreen image viewer.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ViewerItem {
-    Screenshot(usize),
-    World(usize),
-    Server(usize),
-    Replay(usize),
-    Project(usize),
-}
-
-type ProjectDetailKey = (browser::SourceId, String);
 
 enum Reply {
     Done(String, horizon_client::content_files::Kind),
@@ -329,32 +306,15 @@ pub struct Catalog {
     pub sections: [bool; 3],
     pub pending_delete: Option<LocalItem>,
     downloaded: Vec<(browser::SourceId, String)>,
-    pub downloading: Option<(browser::SourceId, String)>,
+    downloading: Option<(browser::SourceId, String)>,
     progress: Arc<Mutex<f32>>,
-    pub failed: Option<(browser::SourceId, String)>,
-    /// Why the last download of a given project failed, and for how long that
-    /// message belongs to that project. Install failures used to live only in
-    /// `status`, so the detail page showed nothing on its Download tab and a
-    /// failed shader looked like a button that silently did nothing.
-    pub failed_message: Option<(browser::SourceId, String, String)>,
-    /// When the running job started; lets a stalled download say so instead of
-    /// spinning forever.
-    job_started: Option<std::time::Instant>,
+    failed: Option<(browser::SourceId, String)>,
     pub page: Page,
     pub query: String,
     pub results: Vec<Project>,
     pub results_born: std::time::Instant,
     pub status: String,
     pub offset: usize,
-    /// Detail page for packs/shaders: Some(index) shows About/Screenshots/Download
-    pub detail_index: Option<usize>,
-    pub detail_tab: u8,
-    /// Fullscreen photo or project-gallery viewer.
-    pub viewer: Option<ViewerItem>,
-    /// Selected saved server detail page.
-    pub server_detail: Option<usize>,
-    /// Selected replay detail page.
-    pub replay_detail: Option<usize>,
     /// The next finished search APPENDS to `results` (the grid's
     /// continuous scroll fetched another page) instead of replacing them.
     pub append_next: bool,
@@ -390,21 +350,26 @@ pub struct Catalog {
     icon_pending: std::collections::HashSet<String>,
     icon_tx: mpsc::Sender<(String, Option<(u64, Vec<u8>)>)>,
     icon_rx: mpsc::Receiver<(String, Option<(u64, Vec<u8>)>)>,
-    detail_cache: std::collections::HashMap<ProjectDetailKey, Result<browser::details::Details, String>>,
-    detail_pending: std::collections::HashSet<ProjectDetailKey>,
-    detail_tx: mpsc::Sender<(ProjectDetailKey, Result<browser::details::Details, String>)>,
-    detail_rx: mpsc::Receiver<(ProjectDetailKey, Result<browser::details::Details, String>)>,
-    preview_cache: std::collections::HashMap<String, Option<PreviewImage>>,
-    preview_pending: std::collections::HashSet<String>,
-    preview_tx: mpsc::Sender<(String, Option<PreviewImage>)>,
-    preview_rx: mpsc::Receiver<(String, Option<PreviewImage>)>,
     worker: Option<mpsc::Receiver<Result<Reply, String>>>,
     search_worker: Option<mpsc::Receiver<Result<Vec<Project>, String>>>,
+    /// A catalog entry's own page: About, screenshots, Download.
+    pub detail: Option<DetailView>,
+    detail_rx: Option<mpsc::Receiver<Result<browser::details::Details, String>>>,
     searches: crate::search_queue::Queue<
         (Page, crate::shader_catalog::Origin, String, usize),
         Vec<Project>,
     >,
 }
+/// One catalog entry opened as its own page.
+pub struct DetailView {
+    /// Where the entry sat in `results` when it was opened (for Install).
+    pub index: usize,
+    pub project: Project,
+    /// None while the page is still loading.
+    pub details: Option<browser::details::Details>,
+    pub error: Option<String>,
+}
+
 #[derive(Clone)]
 pub struct LocalItem {
     pub kind: horizon_client::content_files::Kind,
@@ -420,8 +385,6 @@ impl Catalog {
     pub fn new(home: &Path) -> Self {
         let config = Config::load(home);
         let (icon_tx, icon_rx) = mpsc::channel();
-        let (detail_tx, detail_rx) = mpsc::channel();
-        let (preview_tx, preview_rx) = mpsc::channel();
         let mut result = Self {
             saved_servers: vec![],
             screenshots: vec![],
@@ -434,8 +397,6 @@ impl Catalog {
             downloading: None,
             progress: Arc::new(Mutex::new(0.0)),
             failed: None,
-            failed_message: None,
-            job_started: None,
             page: Page::Play,
             query: String::new(),
             results: vec![],
@@ -444,11 +405,6 @@ impl Catalog {
             offset: 0,
             append_next: false,
             scroll: 0.0,
-            detail_index: None,
-            detail_tab: 0,
-            viewer: None,
-            server_detail: None,
-            replay_detail: None,
             bundled_disabled: std::collections::BTreeSet::new(),
             mods_query: String::new(),
             mods_sort: 0,
@@ -475,16 +431,10 @@ impl Catalog {
             icon_pending: std::collections::HashSet::new(),
             icon_tx,
             icon_rx,
-            detail_cache: std::collections::HashMap::new(),
-            detail_pending: std::collections::HashSet::new(),
-            detail_tx,
-            detail_rx,
-            preview_cache: std::collections::HashMap::new(),
-            preview_pending: std::collections::HashSet::new(),
-            preview_tx,
-            preview_rx,
             worker: None,
             search_worker: None,
+            detail: None,
+            detail_rx: None,
             searches: crate::search_queue::Queue::new(),
         };
         result.refresh(home);
@@ -561,11 +511,7 @@ impl Catalog {
         self.bundled_disabled = on.disabled.clone();
         let settings = horizon_client::settings::Settings::load(&game.join("options.txt"));
         self.extras = settings.extras.clone();
-        // Deliberately NOT `sync_catalog_from_engine` here: that copies the
-        // engine flags back over the catalog, and the engine flags in
-        // `options.txt` are only the ones a game run happened to write. The
-        // catalog is what the launcher's toggles write, so refreshing must
-        // trust it, or every refresh undid a mod the player switched off.
+        horizon_client::volt_mods::sync_catalog_from_engine(&mut self.extras, &settings.horizon);
         horizon_threads::set_thread_boost(self.extras.thread_boost);
         self.local.clear();
         // What the game last reported per mod file (it writes the file at
@@ -622,12 +568,6 @@ impl Catalog {
     pub fn busy(&self) -> bool {
         self.worker.is_some()
     }
-    /// Record a failure against the project that caused it, so its own card
-    /// and detail page can explain what happened.
-    fn note_failure(&mut self, project: &Project, why: &str) {
-        self.failed = Some((project.source, project.id.clone()));
-        self.failed_message = Some((project.source, project.id.clone(), why.to_owned()));
-    }
     pub fn download_label(&self, project: &Project) -> Option<String> {
         if self
             .downloading
@@ -672,7 +612,6 @@ impl Catalog {
             return;
         }
         self.status = status.into();
-        self.job_started = Some(std::time::Instant::now());
         let (tx, rx) = mpsc::channel();
         self.worker = Some(rx);
         if let Err(err) = std::thread::Builder::new()
@@ -695,29 +634,8 @@ impl Catalog {
             })
         {
             self.worker = None;
-            self.job_started = None;
             self.status = format!("Could not start launcher worker: {err}");
-            self.failed = self.downloading.take();
         }
-    }
-
-    /// Why this project's last download failed, if that is still the last
-    /// thing that happened to it. Scoped by project so a failure on one shader
-    /// cannot paint an error banner over every other card.
-    pub fn failure_for(&self, project: &Project) -> Option<&str> {
-        let (source, id, message) = self.failed_message.as_ref()?;
-        (*source == project.source && id == &project.id).then_some(message.as_str())
-    }
-
-    /// The running job's progress, 0..1, for the Download tab's percentage.
-    pub fn progress(&self) -> f32 {
-        *self.progress.lock().unwrap_or_else(|e| e.into_inner())
-    }
-
-    /// True when a job has been running long enough that the UI should say it
-    /// is still alive instead of showing an unchanging "Downloading…".
-    pub fn job_is_stalled(&self, after: std::time::Duration) -> bool {
-        self.job_started.is_some_and(|start| start.elapsed() > after)
     }
     pub fn poll(&mut self, home: &Path) {
         let reply = self.worker.as_ref().and_then(|rx| match rx.try_recv() {
@@ -727,18 +645,13 @@ impl Catalog {
         });
         if let Some(reply) = reply {
             self.worker = None;
-            self.job_started = None;
             let downloading = self.downloading.take();
-            if let Err(error) = &reply {
-                self.failed = downloading.clone();
-                if let Some((source, id)) = downloading {
-                    self.failed_message = Some((source, id, error.clone()));
-                }
+            if reply.is_err() {
+                self.failed = downloading;
             }
             match reply {
                 Ok(Reply::Done(s, kind)) => {
                     self.status = s;
-                    self.failed_message = None;
                     self.show_installed(Some(kind));
                 }
                 Ok(Reply::NativeSource(s)) => self.status = s,
@@ -746,23 +659,28 @@ impl Catalog {
             }
             self.refresh(home);
         }
+        let detail_reply = self.detail_rx.as_ref().and_then(|rx| match rx.try_recv() {
+            Ok(v) => Some(v),
+            Err(mpsc::TryRecvError::Disconnected) => Some(Err("Detail fetch stopped".into())),
+            Err(_) => None,
+        });
+        if let Some(reply) = detail_reply {
+            self.detail_rx = None;
+            if let Some(view) = &mut self.detail {
+                match reply {
+                    Ok(details) => view.details = Some(details),
+                    Err(error) => view.error = Some(error),
+                }
+            }
+        }
         while let Ok((url, decoded)) = self.icon_rx.try_recv() {
             self.icon_pending.remove(&url);
             let entry = decoded.map(|(hash, rgba)| ProjectIcon {
                 hash,
                 rgba,
-                loaded_at: Instant::now(),
+                loaded_at: std::time::Instant::now(),
             });
             self.icon_cache.insert(url, entry);
-        }
-        while let Ok((key, result)) = self.detail_rx.try_recv() {
-            self.detail_pending.remove(&key);
-            self.detail_cache.insert(key, result);
-        }
-        while let Ok((key, image)) = self.preview_rx.try_recv() {
-            self.preview_pending.remove(&key);
-            self.preview_cache.insert(key, image);
-            self.prune_preview_cache();
         }
         let result = self
             .search_worker
@@ -790,6 +708,43 @@ impl Catalog {
     pub fn search(&mut self, home: &Path) {
         self.append_next = false;
         self.request_search(home, true);
+    }
+    /// Open a catalog entry's own page and fetch its body and gallery
+    /// off-thread (registry index or Modrinth's project endpoint).
+    pub fn open_detail(&mut self, index: usize) {
+        let Some(project) = self.results.get(index).cloned() else {
+            return;
+        };
+        self.scroll = 0.0;
+        self.detail = Some(DetailView {
+            index,
+            project: project.clone(),
+            details: None,
+            error: None,
+        });
+        let (tx, rx) = mpsc::channel();
+        self.detail_rx = Some(rx);
+        std::thread::Builder::new()
+            .name("volt-detail".into())
+            .spawn(move || {
+                let result = (|| {
+                    let source: Box<dyn Source> =
+                        if project.source == browser::SourceId::CurseForge {
+                            Box::new(browser::curseforge::CurseForge::volt())
+                        } else {
+                            browser::source(project.source).ok_or("Unsupported source")?
+                        };
+                    source.details(&project)
+                })();
+                let _ = tx.send(result);
+            })
+            .ok();
+    }
+    pub fn close_detail(&mut self) {
+        if self.detail.take().is_some() {
+            self.scroll = 0.0;
+        }
+        self.detail_rx = None;
     }
     /// Whether the continuous grid may fetch another page: the last fetch
     /// filled its page (so more may exist) and nothing is in flight.
@@ -880,172 +835,12 @@ impl Catalog {
         }
         self.queue_result_icons(home);
     }
-    pub fn request_project_details(&mut self, project: &Project) {
-        let key = (project.source, project.id.clone());
-        if self.detail_cache.contains_key(&key)
-            || self.detail_pending.contains(&key)
-            || self.detail_pending.len() >= 4
-        {
-            return;
-        }
-        let project = project.clone();
-        let tx = self.detail_tx.clone();
-        let worker_key = key.clone();
-        let spawn = std::thread::Builder::new()
-            .name("volt-project-details".into())
-            .stack_size(4 * 1024 * 1024)
-            .spawn(move || {
-                let source: Box<dyn Source> = if project.source == browser::SourceId::CurseForge {
-                    Box::new(browser::curseforge::CurseForge::volt())
-                } else if let Some(source) = browser::source(project.source) {
-                    source
-                } else {
-                    let _ = tx.send((worker_key, Err("This project source is not available.".into())));
-                    return;
-                };
-                let result = source.details(&project);
-                let _ = tx.send((worker_key, result));
-            });
-        match spawn {
-            Ok(_) => {
-                self.detail_pending.insert(key);
-            }
-            Err(error) => {
-                self.detail_cache.insert(key, Err(format!("Could not start details request: {error}")));
-            }
-        }
-    }
-    pub fn project_details(
-        &self,
-        project: &Project,
-    ) -> Option<&Result<browser::details::Details, String>> {
-        self.detail_cache.get(&(project.source, project.id.clone()))
-    }
     pub fn project_icon(&self, project: &Project) -> Option<&ProjectIcon> {
         let url = project.icon.as_deref().filter(|u| !u.is_empty())?;
         self.icon_cache.get(url).and_then(|entry| entry.as_ref())
     }
-    pub fn request_project_icon(&mut self, home: &Path, project: &Project) {
-        let Some(url) = project.icon.as_deref().filter(|url| !url.is_empty()) else {
-            return;
-        };
-        if self.icon_pending.len() >= 6
-            || self.icon_cache.contains_key(url)
-            || self.icon_pending.contains(url)
-        {
-            return;
-        }
-        let url_key = url.to_owned();
-        let worker_url = url_key.clone();
-        let tx = self.icon_tx.clone();
-        let home = home.to_path_buf();
-        if std::thread::Builder::new()
-            .name("volt-icon-fetch".into())
-            .stack_size(4 * 1024 * 1024)
-            .spawn(move || {
-                let decoded = fetch_and_round_icon(&home, &worker_url);
-                let _ = tx.send((worker_url, decoded));
-            })
-            .is_ok()
-        {
-            self.icon_pending.insert(url_key);
-        }
-    }
-    pub fn queue_local_preview(&mut self, path: &Path, full: bool) -> String {
-        let key = preview_key(&format!("file:{}", path.to_string_lossy()), full);
-        let path = path.to_path_buf();
-        self.queue_preview_job(key.clone(), move || decode_preview_file(&path, full));
-        key
-    }
-    pub fn queue_bytes_preview(&mut self, label: &str, bytes: &[u8], full: bool) -> String {
-        let content_hash = crate::skin_preview::fnv1a(bytes);
-        let key = preview_key(&format!("bytes:{label}:{content_hash:016x}"), full);
-        if bytes.is_empty() || bytes.len() as u64 > PREVIEW_MAX_BYTES {
-            self.preview_cache.insert(key.clone(), None);
-            return key;
-        }
-        let bytes = bytes.to_vec();
-        self.queue_preview_job(key.clone(), move || decode_preview_bytes(&bytes, full));
-        key
-    }
-    pub fn queue_remote_preview(&mut self, home: &Path, url: &str, full: bool) -> String {
-        let key = preview_key(&format!("remote:{url}"), full);
-        let home = home.to_path_buf();
-        let url = url.to_owned();
-        self.queue_preview_job(key.clone(), move || decode_remote_preview(&home, &url, full));
-        key
-    }
-    pub fn preview(&self, key: &str) -> Option<&PreviewImage> {
-        self.preview_cache.get(key).and_then(Option::as_ref)
-    }
-    pub fn preview_loading(&self, key: &str) -> bool {
-        self.preview_pending.contains(key)
-    }
-    pub fn preview_failed(&self, key: &str) -> bool {
-        self.preview_cache.get(key).is_some_and(Option::is_none)
-    }
-    fn queue_preview_job(
-        &mut self,
-        key: String,
-        load: impl FnOnce() -> Option<PreviewImage> + Send + 'static,
-    ) {
-        if self.preview_cache.contains_key(&key)
-            || self.preview_pending.contains(&key)
-            || self.preview_pending.len() >= 8
-        {
-            return;
-        }
-        let tx = self.preview_tx.clone();
-        let result_key = key.clone();
-        if std::thread::Builder::new()
-            .name("volt-image-preview".into())
-            .stack_size(4 * 1024 * 1024)
-            .spawn(move || {
-                let image = load();
-                let _ = tx.send((result_key, image));
-            })
-            .is_ok()
-        {
-            self.preview_pending.insert(key);
-        } else {
-            self.preview_cache.insert(key, None);
-        }
-    }
-    fn prune_preview_cache(&mut self) {
-        if self.preview_cache.len() <= 48 {
-            return;
-        }
-        let failed: Vec<String> = self
-            .preview_cache
-            .iter()
-            .filter_map(|(key, image)| image.is_none().then_some(key.clone()))
-            .collect();
-        for key in failed {
-            if self.preview_cache.len() <= 40 {
-                break;
-            }
-            self.preview_cache.remove(&key);
-        }
-        let mut oldest: Vec<(Instant, String)> = self
-            .preview_cache
-            .iter()
-            .filter_map(|(key, image)| image.as_ref().map(|image| (image.loaded_at, key.clone())))
-            .collect();
-        oldest.sort_by_key(|(loaded_at, _)| *loaded_at);
-        for (_, key) in oldest {
-            if self.preview_cache.len() <= 40 {
-                break;
-            }
-            self.preview_cache.remove(&key);
-        }
-    }
     pub fn animating_icons_or_cards(&self) -> bool {
-        if !self.icon_pending.is_empty()
-            || !self.preview_pending.is_empty()
-            || !self.detail_pending.is_empty()
-            || self.search_worker.is_some()
-            || self.worker.is_some()
-        {
+        if !self.icon_pending.is_empty() || self.search_worker.is_some() || self.worker.is_some() {
             return true;
         }
         if self.page.is_catalog() && !self.results.is_empty() {
@@ -1139,15 +934,9 @@ impl Catalog {
     }
     pub fn install(&mut self, home: &Path, index: usize) {
         let Some(project) = self.results.get(index).cloned() else {
-            self.status = "That item is no longer in this list: go back and reopen it.".into();
             return;
         };
         if self.busy() || self.download_label(&project).is_some() {
-            // A second tap while another job runs used to do nothing at all.
-            if self.download_label(&project).is_none() {
-                self.status = "Another download is still running; wait for it to finish.".into();
-                self.note_failure(&project, "Another download is still running.");
-            }
             return;
         }
         let game = self.config.game_home(home);
@@ -1185,96 +974,73 @@ impl Catalog {
                 && project.kind == Kind::Mod
                 && project.source == browser::SourceId::Horizon)
         {
-            let why = match project.kind {
-                Kind::Shader => "This shader cannot be installed on this build. Use the Horizon source or a Modrinth/CurseForge ZIP.",
-                Kind::Mod => "Java mods cannot run on Android; only native .hmod mods install here.",
-                _ => "This item cannot be installed on this build.",
-            };
-            self.status = format!("{}: {why}", project.title);
-            self.note_failure(&project, why);
             return;
         }
         self.downloading = Some((project.source, project.id.clone()));
         self.failed = None;
-        self.failed_message = None;
         *self.progress.lock().unwrap_or_else(|e| e.into_inner()) = 0.0;
         let progress = self.progress.clone();
         let status = if project.kind == Kind::Shader
-            && project.source == browser::SourceId::Horizon
-        {
-            "Downloading and verifying Horizon shader pack..."
-        } else if project.kind == Kind::Shader
             && matches!(
                 project.source,
                 browser::SourceId::Modrinth | browser::SourceId::CurseForge
-            )
-        {
+            ) {
             "Downloading shader pack ZIP..."
         } else {
             "Checking compatibility and downloading..."
         };
         self.job(status, move || {
             std::fs::create_dir_all(&game).map_err(|e| e.to_string())?;
-            let progress_update = |p: f32| {
-                if p.is_finite() {
-                    *progress.lock().unwrap_or_else(|e| e.into_inner()) = p.clamp(0.0, 1.0);
-                }
+            let source: Box<dyn Source> = if project.source == browser::SourceId::CurseForge {
+                Box::new(browser::curseforge::CurseForge::volt())
+            } else {
+                browser::source(project.source).ok_or("Unsupported download source")?
             };
             let count = if project.kind == Kind::Shader
-                && project.source == browser::SourceId::Horizon
+                && matches!(
+                    project.source,
+                    browser::SourceId::Modrinth | browser::SourceId::CurseForge
+                )
             {
-                // Horizon's .hshader files are signed registry assets, not web pages or
-                // experimental ZIPs. Use the registry installer directly so Download
-                // always verifies the asset and places it in shaderpacks/.
-                browser::horizon::install(&project, &game, &|_name, p| progress_update(p))?.len()
-            } else {
-                let source: Box<dyn Source> = if project.source == browser::SourceId::CurseForge {
-                    Box::new(browser::curseforge::CurseForge::volt())
-                } else {
-                    browser::source(project.source).ok_or("Unsupported download source")?
-                };
-                if project.kind == Kind::Shader
-                    && matches!(
-                        project.source,
-                        browser::SourceId::Modrinth | browser::SourceId::CurseForge
-                    )
-                {
-                    crate::shader_catalog::install(source.as_ref(), &project, &game, &|_name, p| {
-                        progress_update(p);
-                    })?
-                } else {
-                    let entries = browser::installed::install(source.as_ref(), &project, true, &game, &|_name, p| {
-                        progress_update(p);
-                    })?;
-                    if project.kind == Kind::Mod {
-                        // Sandboxed mods are off until turned on; installing one
-                        // from the browser is that choice, so turn it on now by
-                        // the manifest id the game checks.
-                        let mut on = horizon_client::mod_list::ModList::load(&game);
-                        let mut turned_on = false;
-                        for entry in &entries {
-                            if !entry.file.ends_with(".hmod") {
-                                continue;
-                            }
-                            let id = read_hmod_id(&game.join(&entry.file)).or_else(|| {
-                                std::path::Path::new(&entry.file)
-                                    .file_stem()
-                                    .map(|s| s.to_string_lossy().into_owned())
-                            });
-                            if let Some(id) = id {
-                                turned_on |= on.enabled.insert(id);
-                            }
-                        }
-                        if turned_on {
-                            on.save(&game);
-                        }
-                        return Ok(Reply::NativeSource(format!(
-                            "{} installed and turned on for this profile. Press Play.",
-                            project.title
-                        )));
+                crate::shader_catalog::install(source.as_ref(), &project, &game, &|_name, p| {
+                    if p.is_finite() {
+                        *progress.lock().unwrap_or_else(|e| e.into_inner()) = p.clamp(0.0, 1.0);
                     }
-                    entries.len()
+                })?
+            } else {
+                let entries = browser::installed::install(source.as_ref(), &project, true, &game, &|_name, p| {
+                    if p.is_finite() {
+                        *progress.lock().unwrap_or_else(|e| e.into_inner()) = p.clamp(0.0, 1.0);
+                    }
+                })?;
+                if project.kind == Kind::Mod {
+                    // Sandboxed mods are off until turned on; installing one
+                    // from the browser is that choice, so turn it on now by
+                    // the manifest id the game checks.
+                    let mut on = horizon_client::mod_list::ModList::load(&game);
+                    let mut turned_on = false;
+                    for entry in &entries {
+                        if !entry.file.ends_with(".hmod") {
+                            continue;
+                        }
+                        let id = read_hmod_id(&game.join(&entry.file)).or_else(|| {
+                            std::path::Path::new(&entry.file)
+                                .file_stem()
+                                .map(|s| s.to_string_lossy().into_owned())
+                        });
+                        if let Some(id) = id {
+                            turned_on |= on.enabled.insert(id);
+                        }
+                    }
+                    if turned_on {
+                        on.save(&game);
+                    }
+                    return Ok(Reply::NativeSource(format!(
+                        "{} installed and turned on for this profile. Press Play.",
+                        project.title
+                    )));
                 }
+                entries.len()
             };
             // Say what was installed and the real next step: a shader is not
             // loaded by Play, it is picked in game under Video Settings.
@@ -1553,79 +1319,6 @@ fn run_catalog_query(
     }
 }
 
-const PREVIEW_CARD: (u32, u32) = (320, 180);
-const PREVIEW_FULL_SIDE: u32 = 960;
-const PREVIEW_MAX_BYTES: u64 = 64 << 20;
-
-fn preview_key(source: &str, full: bool) -> String {
-    format!("{source}:{}", if full { "full" } else { "card" })
-}
-
-fn preview_from_image(decoded: image::DynamicImage, full: bool) -> Option<PreviewImage> {
-    let (max_width, max_height) = if full {
-        (PREVIEW_FULL_SIDE, PREVIEW_FULL_SIDE)
-    } else {
-        PREVIEW_CARD
-    };
-    let pixels = decoded.thumbnail(max_width, max_height).to_rgba8();
-    let (width, height, rgba) = (pixels.width(), pixels.height(), pixels.into_raw());
-    if width == 0 || height == 0 {
-        return None;
-    }
-    let hash = crate::skin_preview::fnv1a(&rgba)
-        ^ (u64::from(width) << 32)
-        ^ u64::from(height);
-    Some(PreviewImage {
-        hash,
-        width,
-        height,
-        rgba,
-        loaded_at: Instant::now(),
-    })
-}
-
-fn preview_limits() -> image::Limits {
-    let mut limits = image::Limits::default();
-    limits.max_image_width = Some(8192);
-    limits.max_image_height = Some(8192);
-    limits.max_alloc = Some(128 << 20);
-    limits
-}
-
-fn decode_preview_file(path: &Path, full: bool) -> Option<PreviewImage> {
-    let metadata = std::fs::symlink_metadata(path).ok()?;
-    if !metadata.is_file() || metadata.file_type().is_symlink() || metadata.len() > PREVIEW_MAX_BYTES {
-        return None;
-    }
-    let file = std::fs::File::open(path).ok()?;
-    let mut reader = image::ImageReader::new(std::io::BufReader::new(file))
-        .with_guessed_format()
-        .ok()?;
-    reader.limits(preview_limits());
-    preview_from_image(reader.decode().ok()?, full)
-}
-
-fn decode_preview_bytes(bytes: &[u8], full: bool) -> Option<PreviewImage> {
-    if bytes.is_empty() || bytes.len() as u64 > PREVIEW_MAX_BYTES {
-        return None;
-    }
-    let mut reader = image::ImageReader::new(std::io::Cursor::new(bytes))
-        .with_guessed_format()
-        .ok()?;
-    reader.limits(preview_limits());
-    preview_from_image(reader.decode().ok()?, full)
-}
-
-fn decode_remote_preview(home: &Path, url: &str, full: bool) -> Option<PreviewImage> {
-    if browser::images::refuse(url).is_some() {
-        return None;
-    }
-    let side = if full { PREVIEW_FULL_SIDE } else { PREVIEW_CARD.0 };
-    let path = browser::images::cached(home, url, side)
-        .or_else(|| browser::images::fetch(home, url, side).ok())?;
-    decode_preview_file(&path, full)
-}
-
 fn fetch_and_round_icon(home: &Path, url: &str) -> Option<(u64, Vec<u8>)> {
     let decoded = if let Some(cached_path) = browser::images::cached(home, url, 80)
         .or_else(|| browser::images::fetch(home, url, 80).ok())
@@ -1726,22 +1419,4 @@ fn mod_report_status(report: &str, file: &str) -> Option<String> {
         }
     }
     Some(status)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::shader_catalog::Origin;
-
-    #[test]
-    fn shader_catalog_defaults_to_horizon_but_keeps_an_explicit_source() {
-        assert_eq!(Config::default().shader_source, Origin::Horizon);
-        let old_config: Config = serde_json::from_value(serde_json::json!({})).unwrap();
-        assert_eq!(old_config.shader_source, Origin::Horizon);
-        let chosen: Config = serde_json::from_value(serde_json::json!({
-            "shader_source": "modrinth"
-        }))
-        .unwrap();
-        assert_eq!(chosen.shader_source, Origin::Modrinth);
-    }
 }

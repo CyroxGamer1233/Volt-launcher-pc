@@ -50,7 +50,9 @@ wgsl_types! {
     [f32; 2] => "vec2<f32>",
     [f32; 3] => "vec3<f32>",
     [f32; 4] => "vec4<f32>",
+    [u32; 2] => "vec2<u32>",
     [[f32; 4]; 4] => "mat4x4<f32>",
+    [[f32; 4]; 8] => "array<vec4<f32>, 8>",
 }
 
 /// A uniform struct: the Rust type the renderer uploads, and its WGSL.
@@ -143,6 +145,89 @@ uniform! {
         frame_index: u32,
         /// 1 while F1 hides the HUD, else 0.
         hide_gui: u32,
+        /// What falls in the biome at the camera while it rains: 0 nothing, 1 rain, 2 snow.
+        precipitation: u32,
+        /// The biome at the camera's temperature (vanilla's, -0.7..2.0; it snows below 0.15).
+        temperature: f32,
+        /// The biome at the camera's downfall, 0..1.
+        downfall: f32,
+        /// `rain`, smoothed: rises over about 30 seconds and dries over about 10, 0..1.
+        wetness: f32,
+        /// Last frame's camera-relative world to clip space (its `projection * view`); a point
+        /// at camera-relative `p` now was at `p + camera_motion` relative to last frame's
+        /// camera. This frame's on the first frame and after a gap of over half a second (a
+        /// pause, a world load), when last frame's camera says nothing about this one.
+        previous_view_projection: [[f32; 4]; 4],
+        /// How far the camera moved since last frame, in blocks (0 after such a gap).
+        camera_motion: [f32; 3],
+        /// Seconds since last frame (0 on the first and after such a gap).
+        delta_time: f32,
+        /// `eye_light` eased with a half-life of 2 seconds: it follows the light levels' steps
+        /// without stepping itself (for exposure and indoor fog).
+        eye_light_smooth: [f32; 2],
+        /// 1 while the camera is in water (`eye_in` 1), eased with a half-life of a quarter
+        /// second in and out.
+        in_water: f32,
+        /// The same for lava (`eye_in` 2).
+        in_lava: f32,
+        /// The y of the horizontal water plane `reflection` mirrors the world about, in world
+        /// blocks, while `has_reflection` is 1; this build serves no reflection pass, so 0.
+        water_plane: f32,
+        /// 1 while a reflection texture holds this frame's water mirror, else 0; always 0 on
+        /// this build (no reflection pass), so a pack takes its no-reflection path.
+        has_reflection: u32,
+        /// The size a reflection texture would have, in pixels: half the world's picture.
+        reflection_resolution: [f32; 2],
+        /// Eight values a native mod hands its own pack each frame: what they mean is that
+        /// mod's. All 0 when no mod sets them.
+        mods: [[f32; 4]; 8],
+        /// Unit vector toward the body casting this frame's light: the sun by day, the moon
+        /// by night.
+        light_direction: [f32; 3],
+        /// 1 while a shadow map holds this frame's shadows, else 0; always 0 on this build
+        /// (no shadow pass), so a pack takes its no-shadow path.
+        has_shadow: u32,
+        /// Camera-relative world to the shadow camera's clip space while `has_shadow` is 1;
+        /// the identity on this build.
+        shadow_view_proj: [[f32; 4]; 4],
+        /// Half the side of the square a shadow map would cover, in blocks; 0 without one.
+        shadow_distance: f32,
+        /// How strongly a shadow map is distorted toward its centre, 0..1; 0 without one.
+        shadow_distortion: f32,
+        /// A shadow map's side, in texels; 0 without one.
+        shadow_resolution: f32,
+        /// The ground one shadow texel covers at the map's centre, in blocks; 0 without one.
+        shadow_center_texel: f32,
+        /// 1 while the output is HDR, else 0; 0 on this build (SDR output).
+        hdr: u32,
+        /// The peak over paper white: the brightest value the display shows. 1 in SDR.
+        headroom: f32,
+        /// Paper white in nits; a nominal 80 in SDR.
+        paper_white: f32,
+        /// The peak brightness in nits; a nominal 80 in SDR, as `paper_white`.
+        peak: f32,
+        /// The display's black in nits (HDR's Black Level); 0 in SDR.
+        black_level: f32,
+        /// The primaries of this pack's colours: 0 BT.709, 1 BT.2020; 0 on this build.
+        primaries: u32,
+        /// 1 while ray queries read this frame's scene, else 0; always 0 on this build (no
+        /// ray tracing), so every ray would miss.
+        has_ray_tracing: u32,
+        /// How far from the camera along x and along z, in blocks, a traced scene is sure to
+        /// reach; 0 while `has_ray_tracing` is 0.
+        ray_distance: f32,
+        /// The weights that give a colour's luminance in those primaries,
+        /// `dot(c, frame.luminance)`: (0.2126, 0.7152, 0.0722) for BT.709.
+        luminance: [f32; 3],
+        /// Changes when kept view resources are cleared and is never 0; constant 1 on this
+        /// build (no kept resources).
+        view_epoch: u32,
+        /// The same for kept world resources; constant 1 on this build.
+        world_epoch: u32,
+        /// Why an epoch changed this frame; 0 when neither did (always, on this build).
+        reset_reasons: u32,
+        /// Pads the struct to a multiple of 16 bytes; always 0.
+        padding: [u32; 2],
     }
 }
 
@@ -207,9 +292,11 @@ mod tests {
     #[test]
     fn frame_fields_carry_their_docs() {
         let wgsl = Frame::WGSL;
-        assert_eq!(wgsl.fields.len(), 28);
+        assert_eq!(wgsl.fields.len(), 62);
         assert!(wgsl.fields.iter().all(|f| !f.doc.trim().is_empty()));
-        assert_eq!(std::mem::size_of::<Frame>(), 4 * 64 + 9 * 16);
+        // 6 mat4x4, one array<vec4, 8>, and 19 vec4-sized blocks of scalars and
+        // small vectors (the layout test in tests/reference.rs checks each offset).
+        assert_eq!(std::mem::size_of::<Frame>(), 6 * 64 + 8 * 16 + 19 * 16);
         assert!(
             wgsl.wgsl()
                 .contains("    camera_position: vec3<f32>,\n    time: f32,\n")

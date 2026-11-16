@@ -41,16 +41,16 @@ pub(crate) mod theme {
     /// polished silver, whatever accent color Classic is set to.
     fn accent() -> u32 { if liquid() { return hex(0xdfe4ec, 255); } hex(look().glass.accent, 255) }
     fn choose(dark_value: u32, light_value: u32) -> u32 { if dark() { dark_value } else { light_value } }
-    pub fn BG() -> u32 { if liquid() { return hex(0x000000, 255); } choose(hex(0x0c0e13,255), hex(0xedf1f0,255)) }
-    pub fn BACKDROP() -> u32 { if liquid() { return hex(0x000000, 240); } hex(0x070a1a, 215) }
-    pub fn RAIL() -> u32 { if liquid() { return hex(0x0a0a0c, 155); } choose(hex(0x15181f,205), hex(0xfcfdfd,225)) }
-    pub fn CARD() -> u32 { if liquid() { return hex(0x0c0c0e, 148); } choose(hex(0x1a1d25,215), hex(0xfcfdfd,230)) }
-    pub fn CARD_INNER() -> u32 { if liquid() { return hex(0x121214, 165); } choose(hex(0x272c36,225), hex(0xe7ecea,245)) }
-    pub fn HOVER() -> u32 { if liquid() { return hex(0x1e1e22, 190); } choose(hex(0x343a46,235), hex(0xd8e0dd,245)) }
+    pub fn BG() -> u32 { if liquid() { return hex(0x060709, 255); } choose(hex(0x0c0e13,255), hex(0xedf1f0,255)) }
+    pub fn BACKDROP() -> u32 { if liquid() { return hex(0x04060c, 225); } hex(0x070a1a, 215) }
+    pub fn RAIL() -> u32 { if liquid() { return hex(0x0c0e13, 172); } choose(hex(0x15181f,205), hex(0xfcfdfd,225)) }
+    pub fn CARD() -> u32 { if liquid() { return hex(0x11141b, 172); } choose(hex(0x1a1d25,215), hex(0xfcfdfd,230)) }
+    pub fn CARD_INNER() -> u32 { if liquid() { return hex(0x191d26, 188); } choose(hex(0x272c36,225), hex(0xe7ecea,245)) }
+    pub fn HOVER() -> u32 { if liquid() { return hex(0x272d3a, 212); } choose(hex(0x343a46,235), hex(0xd8e0dd,245)) }
     pub fn HERO_BG() -> u32 { CARD() }
     pub fn HERO_GLOW() -> u32 { lerp(CARD(), accent(), 0.22) }
     pub fn HERO_GLOW_SOFT() -> u32 { lerp(CARD(), accent(), 0.12) }
-    pub fn BORDER() -> u32 { if liquid() { return hex(0xffffff, 18); } choose(hex(0xffffff,30), hex(0x3c4a44,34)) }
+    pub fn BORDER() -> u32 { if liquid() { return hex(0xffffff, 34); } choose(hex(0xffffff,30), hex(0x3c4a44,34)) }
     pub fn BORDER_CRIMSON() -> u32 { lerp(BORDER(), accent(), 0.32) }
     pub fn CRIMSON() -> u32 { accent() }
     pub fn CRIMSON_BRIGHT() -> u32 {
@@ -75,9 +75,10 @@ pub(crate) mod theme {
     pub fn STATUS_BAD() -> u32 { choose(hex(0xf87171,255), hex(0xb91c1c,255)) }
     pub fn GLASS() -> u32 {
         if liquid() {
-            // Pure black glass: OLED true black, very low opacity, no silver
+            // Near-clear smoked crystal; a cool silver shimmer published by
+            // the moonlight scene rolls softly through every panel.
             let e = ember();
-            return lerp(hex(0x070709, 92), hex(0x101012, 105), 0.5 * e);
+            return lerp(hex(0x0c0e13, 150), hex(0x1b1f28, 160), 0.5 * e);
         }
         if !dark() { return hex(0xffffff, 214); }
         // Neutral smoked glass per the chosen reference, faintly tinted by
@@ -87,12 +88,74 @@ pub(crate) mod theme {
             hex(glass.plate, 202)
         }, 0.18)
     }
-    pub fn GLASS_INNER() -> u32 { if liquid() { return hex(0xffffff, (7.0 + 6.0 * ember()) as u8); } choose(hex(0xffffff,14), hex(0x101a14,12)) }
-    pub fn GLASS_BORDER() -> u32 { if liquid() { let e = ember(); return lerp(hex(0xffffff, (20.0 + 14.0 * e) as u8), hex(0x9aa0ae, 38), 0.45 * e); } choose(hex(0xffffff,36), hex(0x3c4a44,30)) }
+    pub fn GLASS_INNER() -> u32 { if liquid() { return hex(0xffffff, (13.0 + 9.0 * ember()) as u8); } choose(hex(0xffffff,14), hex(0x101a14,12)) }
+    pub fn GLASS_BORDER() -> u32 { if liquid() { let e = ember(); return lerp(hex(0xffffff, (44.0 + 30.0 * e) as u8), hex(0xdfe6f2, 96), 0.45 * e); } choose(hex(0xffffff,36), hex(0x3c4a44,30)) }
 }
 
 #[derive(Clone, Copy, PartialEq)]
-pub(crate) enum HomeTab { Overview, Worlds, Multiplayer, Screenshots, Replays, VoltBoost, Console }
+pub(crate) enum HomeTab { Overview, Worlds, Multiplayer, Screenshots, Replays, Console }
+
+/// What the full-screen photo viewer shows, over every launcher page.
+#[derive(Clone)]
+pub(crate) struct PhotoView {
+    pub title: String,
+    /// The photo cache key (stable per picture version).
+    pub key: String,
+    pub source: crate::photo_cache::Source,
+}
+
+/// The cover picture saved beside a replay (`<file>.png`).
+pub(crate) fn replay_cover_path(replay: &std::path::Path) -> std::path::PathBuf {
+    let mut name = replay.as_os_str().to_owned();
+    name.push(".png");
+    std::path::PathBuf::from(name)
+}
+
+/// The world folders under `saves`, sorted, as the Worlds grid shows them.
+fn world_folders_in(saves: &std::path::Path) -> Vec<String> {
+    let mut worlds: Vec<String> = std::fs::read_dir(saves)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter(|entry| entry.path().is_dir())
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .collect();
+    worlds.sort_unstable();
+    worlds
+}
+
+/// One gallery thumbnail: the letterboxed picture when decoded, a quiet
+/// placeholder tile while loading or when there is no picture.
+fn draw_photo_thumb(
+    ui: &mut Ui,
+    photos: &mut crate::photo_cache::PhotoCache,
+    slot: usize,
+    key: &str,
+    source: &crate::photo_cache::Source,
+    rect: [f32; 4],
+    glyph: u8,
+) {
+    use crate::photo_cache::Fit;
+    let [x, y, w, h] = rect;
+    ui.rounded(x, y, w, h, 8.0, theme::HERO_BG());
+    let mut drawn = false;
+    if let Some(photo) = photos.get(key, source, Fit::Thumb) {
+        let fade = (photo.loaded_at.elapsed().as_secs_f32() / 0.22).clamp(0.0, 1.0);
+        let alpha = (ease_out_cubic(fade) * 255.0).round() as u8;
+        let (cw, ch) = Fit::Thumb.canvas();
+        drawn = ui.draw_dynamic_rgba(slot, photo.hash, cw, ch, &photo.rgba, x, y, w, h, alpha);
+    }
+    if !drawn {
+        // Placeholder: the tab's glyph, dim, centred.
+        draw_tile_icon(
+            ui,
+            glyph,
+            x + w * 0.5,
+            y + h * 0.5,
+            horizon_client::ui_theme::color::hex(0xc9cfdb, 70),
+        );
+    }
+}
 
 #[derive(Clone, Copy, PartialEq)]
 pub(crate) enum Action {
@@ -101,14 +164,8 @@ pub(crate) enum Action {
     ToggleLiquid,
     CycleAccent,
     ConnectServer(usize),
-    ViewServer(usize),
-    CloseServer,
-    ViewServerImage(usize),
     SaveServer,
     WatchReplay(usize),
-    ViewReplay(usize),
-    CloseReplayDetail,
-    ViewReplayImage(usize),
     ExportReplay(usize),
     DeleteReplay(usize),
     DeleteRecording(usize),
@@ -127,13 +184,16 @@ pub(crate) enum Action {
     FinishNameEdit,
     Install(usize),
     OpenProject(usize),
-    ViewDetail(usize),
+    /// A catalog card's own page: About, screenshots and Download.
+    OpenDetail(usize),
     CloseDetail,
-    DetailTab(u8),
+    /// Full-screen pictures: a screenshot, a world icon, a replay cover, a
+    /// catalog gallery shot. Closed by `ClosePhoto`.
     ViewScreenshot(usize),
     ViewWorld(usize),
-    ViewProjectImage(usize),
-    CloseViewer,
+    ViewReplayCover(usize),
+    ViewGalleryImage(usize),
+    ClosePhoto,
     Import(horizon_client::content_files::Kind),
     OpenFolder(horizon_client::content_files::Kind),
     ToggleSection(usize),
@@ -356,7 +416,7 @@ fn bundled_mod_blurb(id: &str) -> &'static str {
         "crosshair_indicator" => "The crosshair reacts when a target is within reach.",
         "hitbox_plus" => "Entity hitboxes with reach-aware colors and thickness.",
         "invisible_frames" => "Sneak-right-click a filled frame to hide and lock it.",
-        "freelook" => "Orbit the camera around your player without turning. Hold the key, or tap the Look button on the touch HUD.",
+        "freelook" => "Hold a key for a third-person camera you can look around in.",
         "worldedit" => "In-game WorldEdit: wand selections, //set, //copy and the other commands.",
         "horizonmatica" => "Litematica for Horizon: schematics as ghost blocks, a verifier and material lists.",
         "visuality_horizon" => "Small pixel particles: hit fragments, slime blobs, soul flames and more.",
@@ -390,172 +450,6 @@ fn has_active_toggle_anims() -> bool {
 #[inline]
 fn point_in(p: (f32, f32), r: [f32; 4]) -> bool {
     p.0 >= r[0] && p.0 <= r[0] + r[2] && p.1 >= r[1] && p.1 <= r[1] + r[3]
-}
-
-const LIQUID_LEFT_RAIL_INSET: f32 = 8.0;
-const LIQUID_LEFT_RAIL_WIDTH: f32 = 78.0;
-const LIQUID_RIGHT_RAIL_INSET: f32 = 8.0;
-const LIQUID_RIGHT_RAIL_WIDTH: f32 = 88.0;
-const LIQUID_RAIL_CONTENT_GAP: f32 = 16.0;
-
-/// Home's secondary tabs retain the left navigation and use the remaining
-/// visible surface for their content. Coordinates stay visible-area-local
-/// until the shared inset shift is applied.
-fn liquid_home_tab_area(area: [f32; 4], surface_right: f32) -> [f32; 4] {
-    let [x, y, _, h] = area;
-    let left = x + LIQUID_LEFT_RAIL_INSET + LIQUID_LEFT_RAIL_WIDTH + LIQUID_RAIL_CONTENT_GAP;
-    let right = x + surface_right
-        - LIQUID_RIGHT_RAIL_INSET
-        - LIQUID_RIGHT_RAIL_WIDTH
-        - LIQUID_RAIL_CONTENT_GAP;
-    [left, y, (right - left).max(0.0), h]
-}
-
-/// Width available for the dashboard's top-right column (account chip and the
-/// Discord row under it) before the destination rail begins.
-fn indicator_right_room(surface_right: f32) -> f32 {
-    surface_right - LIQUID_RIGHT_RAIL_INSET - LIQUID_RIGHT_RAIL_WIDTH - 24.0
-}
-
-fn liquid_right_rail_x(area: [f32; 4], surface_right: f32) -> f32 {
-    area[0] + surface_right - LIQUID_RIGHT_RAIL_INSET - LIQUID_RIGHT_RAIL_WIDTH
-}
-
-/// The destination rail: Worlds, Servers, Shots, Replays and Boost, icon-only
-/// so every entry fits a landscape phone and Boost is never cut off.
-fn draw_right_rail(
-    ui: &mut Ui,
-    area: [f32; 4],
-    surface_right: f32,
-    home_tab: HomeTab,
-    page: Page,
-    targets: &mut Vec<([f32; 4], Action)>,
-) {
-    let [_, ay, _, h] = area;
-    let rail_x = liquid_right_rail_x(area, surface_right);
-    let rail_y = ay + 12.0;
-    let rail_h = (h - 24.0).max(0.0);
-    ui.rounded(rail_x, rail_y, LIQUID_RIGHT_RAIL_WIDTH, rail_h, 18.0, theme::GLASS());
-    ui.border(rail_x, rail_y, LIQUID_RIGHT_RAIL_WIDTH, rail_h, 18.0, theme::GLASS_BORDER());
-    let right_nav: [(&str, u8, HomeTab); 5] = [
-        ("Worlds", 0, HomeTab::Worlds),
-        ("Servers", 1, HomeTab::Multiplayer),
-        ("Shots", 2, HomeTab::Screenshots),
-        ("Replays", 7, HomeTab::Replays),
-        ("Boost", 4, HomeTab::VoltBoost),
-    ];
-    let (item_h, gap) = if rail_h < 380.0 {
-        (40.0, 4.0)
-    } else if rail_h < 520.0 {
-        (50.0, 6.0)
-    } else {
-        (62.0, 8.0)
-    };
-    let total = item_h * right_nav.len() as f32 + gap * (right_nav.len() as f32 - 1.0);
-    let start_y = rail_y + (rail_h - total).max(0.0) * 0.5;
-    for (i, (label, glyph, tab)) in right_nav.iter().enumerate() {
-        let y = start_y + i as f32 * (item_h + gap);
-        let rect = [rail_x + 6.0, y, LIQUID_RIGHT_RAIL_WIDTH - 12.0, item_h];
-        let active = home_tab == *tab && page == Page::Play;
-        if active {
-            ui.rounded(rect[0], rect[1], rect[2], rect[3], 12.0, theme::HOVER());
-            ui.border(rect[0], rect[1], rect[2], rect[3], 12.0, theme::BORDER());
-            let inset = (item_h * 0.22).max(7.0);
-            ui.rounded(rect[0] - 1.0, rect[1] + inset, 2.2, rect[3] - inset * 2.0, 1.0, theme::TEXT());
-        }
-        let (icon_y, label_y, font) = if item_h < 48.0 {
-            (13.0, 22.0, 8.5)
-        } else if item_h < 56.0 {
-            (16.0, 26.0, 9.0)
-        } else {
-            (18.0, 31.0, 9.5)
-        };
-        let col = if active { theme::TEXT() } else { theme::MUTED() };
-        draw_tile_icon(ui, *glyph, rect[0] + rect[2] * 0.5, rect[1] + icon_y, col);
-        let fitted = ui.fit_text(Face::LauncherMedium, font, label, (rect[2] - 2.0).max(20.0));
-        draw_centered_text(
-            ui,
-            Face::LauncherMedium,
-            font,
-            [rect[0] + 1.0, rect[1] + label_y, rect[2] - 2.0, (item_h - label_y + 1.0).max(16.0)],
-            if active { theme::TEXT() } else { theme::DIM() },
-            &fitted,
-        );
-        targets.push((rect, Action::HomeTab(*tab)));
-    }
-}
-
-#[cfg(test)]
-mod liquid_home_layout_tests {
-    use super::*;
-
-    #[test]
-    fn secondary_home_content_clears_both_rails_and_the_visible_right_edge() {
-        let area = liquid_home_tab_area([0.0, 0.0, 800.0, 600.0], 800.0);
-        assert_eq!(area, [102.0, 0.0, 584.0, 600.0]);
-        // Nothing of the tab body may sit under the destination rail.
-        assert!(area[0] + area[2] <= liquid_right_rail_x([0.0, 0.0, 800.0, 600.0], 800.0));
-    }
-
-    #[test]
-    fn secondary_home_content_uses_the_visible_surface_origin() {
-        let area = liquid_home_tab_area([24.0, 12.0, 700.0, 500.0], 700.0);
-        assert_eq!(area, [126.0, 12.0, 484.0, 500.0]);
-    }
-
-    /// The bug this pins: the controls were laid out in a "visible frame"
-    /// narrower than the screen, so the destination rail stopped at the inset
-    /// edge and left a dead strip of wallpaper to its right (measured on a
-    /// 2412 px screen: rail ended at 2144, layout width 2160). The rail must
-    /// sit on the real right edge of the surface, exactly inset by its own
-    /// margin and nothing else.
-    #[test]
-    fn destination_rail_sits_on_the_true_screen_edge() {
-        let area = [0.0, 0.0, 2412.0, 1080.0];
-        let x = liquid_right_rail_x(area, 2412.0);
-        let outer_edge = x + LIQUID_RIGHT_RAIL_WIDTH;
-        // Outer edge + inset == the surface's right edge, to the pixel.
-        assert!((outer_edge + LIQUID_RIGHT_RAIL_INSET - 2412.0).abs() < 0.001,
-            "rail outer edge {outer_edge} should leave exactly {LIQUID_RIGHT_RAIL_INSET} of inset");
-        // And nothing more: the strip beyond the rail is the inset only.
-        let dead_strip = 2412.0 - outer_edge;
-        assert!(dead_strip <= LIQUID_RIGHT_RAIL_INSET + 0.001, "dead strip {dead_strip}");
-    }
-
-    /// Play is centred on the *screen*, not on the space left over after the
-    /// rails: with the visible frame fixed, both are the same thing, but the
-    /// distinction is what the old layout got wrong.
-    #[test]
-    fn play_pill_is_centred_on_the_screen() {
-        let w = 2412.0;
-        let (rail_w, right_rail_w) = (LIQUID_LEFT_RAIL_WIDTH, LIQUID_RIGHT_RAIL_WIDTH);
-        // The dashboard's own arithmetic, mirrored from draw_liquid_home.
-        let content_w = (w - rail_w - right_rail_w - 32.0).max(340.0);
-        let px0 = 8.0 + rail_w + 16.0 + (content_w - 320.0) * 0.5;
-        let centre = px0 + 320.0 * 0.5;
-        // Screen centre, allowing for the left rail's odd 16 dp gutter.
-        let rails_centre = (LIQUID_LEFT_RAIL_INSET + rail_w + 16.0 + (w - LIQUID_RIGHT_RAIL_INSET - right_rail_w)) * 0.5;
-        assert!((centre - rails_centre).abs() <= 1.0, "{centre} vs {rails_centre}");
-    }
-
-    /// The dashboard Play pill is centred in the column between the two rails,
-    /// which is where players read "middle bottom" on a landscape phone.
-    #[test]
-    fn play_pill_is_centred_between_the_rails() {
-        let (w, rail_w, right_rail_w, play_w) = (800.0, 78.0, 88.0, 320.0);
-        let content_w = (w - rail_w - right_rail_w - 32.0).max(play_w + 20.0);
-        let px0 = rail_w + 16.0 + (content_w - play_w) * 0.5;
-        let centre = px0 + play_w * 0.5;
-        let rails_centre = (rail_w + 16.0 + (w - right_rail_w)) * 0.5;
-        assert!((centre - rails_centre).abs() <= 1.0, "{centre} vs {rails_centre}");
-    }
-
-    #[test]
-    fn right_rail_keeps_an_eight_unit_visible_edge_inset() {
-        let x = liquid_right_rail_x([0.0, 0.0, 800.0, 600.0], 800.0);
-        assert_eq!(x, 704.0);
-        assert_eq!(x + LIQUID_RIGHT_RAIL_WIDTH, 792.0);
-    }
 }
 
 fn styled_button(
@@ -778,74 +672,6 @@ fn format_downloads(n: u64) -> String {
     }
 }
 
-fn local_worlds(game_home: &std::path::Path) -> Vec<(String, std::path::PathBuf)> {
-    let mut worlds: Vec<_> = std::fs::read_dir(game_home.join("saves"))
-        .into_iter()
-        .flatten()
-        .flatten()
-        .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_dir()))
-        .map(|entry| {
-            (
-                entry.file_name().to_string_lossy().into_owned(),
-                entry.path(),
-            )
-        })
-        .collect();
-    worlds.sort_by(|a, b| a.0.cmp(&b.0));
-    worlds
-}
-
-/// The picture a world card shows when the save has no `icon.png`: the newest
-/// screenshot stored in the world folder, as desktop players expect.
-fn world_picture(world: &std::path::Path) -> Option<std::path::PathBuf> {
-    let mut best: Option<(std::time::SystemTime, std::path::PathBuf)> = None;
-    for folder in [world.to_path_buf(), world.join("screenshots")] {
-        for entry in std::fs::read_dir(folder).into_iter().flatten().flatten() {
-            let path = entry.path();
-            if !path.extension().is_some_and(|ext| ext.eq_ignore_ascii_case("png")) {
-                continue;
-            }
-            let Ok(meta) = std::fs::symlink_metadata(&path) else {
-                continue;
-            };
-            if !meta.is_file() || meta.file_type().is_symlink() {
-                continue;
-            }
-            let stamp = meta.modified().unwrap_or(std::time::UNIX_EPOCH);
-            if best.as_ref().is_none_or(|(seen, _)| stamp > *seen) {
-                best = Some((stamp, path));
-            }
-        }
-    }
-    best.map(|(_, path)| path)
-}
-
-fn preview_slot(index: usize) -> usize {
-    match index % 30 {
-        0 => 0,
-        1 => 1,
-        slot => slot + 2,
-    }
-}
-
-fn replay_thumbnail_path(
-    game_home: &std::path::Path,
-    replay: &horizon_client::replay::Meta,
-) -> Option<std::path::PathBuf> {
-    let stem = replay.path.file_stem()?.to_string_lossy();
-    let screenshots = game_home.join("screenshots");
-    let candidates = [
-        replay.path.with_extension("png"),
-        screenshots.join(format!("{stem}.png")),
-        screenshots.join(format!("{stem}-thumbnail.png")),
-        screenshots.join(format!("{stem}_thumbnail.png")),
-    ];
-    candidates.into_iter().find(|path| {
-        std::fs::symlink_metadata(path)
-            .is_ok_and(|meta| meta.is_file() && !meta.file_type().is_symlink())
-    })
-}
-
 fn wrap_lines(ui: &Ui, face: Face, size: f32, text: &str, max_w: f32, max_lines: usize) -> Vec<String> {
     let mut lines = Vec::new();
     let mut current = String::new();
@@ -1008,9 +834,10 @@ fn draw_moonlight_scene(ui: &mut Ui, w: f32, h: f32, phase: f32) {
     .clamp(0.0, 1.0);
     theme::set_ember(shimmer);
 
-    // Black glassy OLED: true black throughout, almost no gradient – pure OLED
+    // Night sky: pure black up high, the faintest blue-grey toward the
+    // ridge line — dark with depth, never flat.
     let stops: [(f32, u32); 4] =
-        [(0.0, 0x000000), (0.5, 0x000000), (0.8, 0x010102), (1.0, 0x020203)];
+        [(0.0, 0x020304), (0.5, 0x050608), (0.8, 0x090a0e), (1.0, 0x0c0d11)];
     let rows = 20;
     for row in 0..rows {
         let ty = row as f32 / (rows - 1) as f32;
@@ -1254,51 +1081,23 @@ fn draw_tile_icon(ui: &mut Ui, kind: u8, cx: f32, cy: f32, col: u32) {
                 ui.rounded(cx - 8.0, cy - 6.0 + i as f32 * 5.5, *lw, 2.4, 1.2, col);
             }
         }
-        // Volt Boost: a two-part lightning mark.
-        4 => {
+        // Replays: a filmstrip frame with sprocket holes.
+        5 => {
+            ui.border(cx - 9.0, cy - 6.5, 18.0, 13.0, 3.0, col);
+            for i in 0..3 {
+                let hy = cy - 5.0 + i as f32 * 4.0;
+                ui.rounded(cx - 7.0, hy, 2.2, 2.2, 1.1, col);
+                ui.rounded(cx + 4.8, hy, 2.2, 2.2, 1.1, col);
+            }
+            ui.rounded(cx - 2.2, cy - 3.0, 4.4, 6.0, 1.4, col);
+        }
+        // Boost/settings bolt: a simple two-part lightning mark.
+        _ => {
             ui.rounded(cx - 1.0, cy - 8.0, 4.5, 8.5, 1.5, col);
             ui.rounded(cx - 3.5, cy - 0.5, 4.5, 8.5, 1.5, col);
             ui.rounded(cx - 5.0, cy - 1.2, 10.0, 2.4, 1.2, col);
         }
-        // Replays: a film frame with a play mark, distinct from the screenshot camera.
-        7 => {
-            ui.border(cx - 8.0, cy - 7.0, 16.0, 14.0, 2.0, col);
-            ui.rounded(cx - 5.5, cy - 4.5, 1.8, 3.0, 0.8, col);
-            ui.rounded(cx - 5.5, cy + 1.5, 1.8, 3.0, 0.8, col);
-            ui.rounded(cx + 3.7, cy - 4.5, 1.8, 3.0, 0.8, col);
-            ui.rounded(cx + 3.7, cy + 1.5, 1.8, 3.0, 0.8, col);
-            draw_play_triangle(ui, cx - 1.5, cy, 5.0, col);
-        }
-        _ => {}
     }
-}
-
-/// A small, Minecraft-inspired floating player name tag above the 3D preview.
-fn draw_player_nameplate(ui: &mut Ui, bounds: [f32; 4], name: &str) {
-    use horizon_client::ui_theme::color::hex;
-
-    let [x, y, w, h] = bounds;
-    let name = name.trim();
-    if name.is_empty() || w < 40.0 || h < 40.0 {
-        return;
-    }
-
-    // The preview model is 32 units tall and centred at 52% of its clipping
-    // bounds. Put the tag just above the rendered head, not the bounds edge.
-    let unit = (h / 33.5).min(w / 18.5);
-    let head_top = y + h * 0.52 - unit * 16.5;
-    let tag_h = 24.0;
-    let tag_y = (head_top - tag_h - 8.0).max(2.0);
-    let max_w = w.min(220.0).max(84.0);
-    let tag_w = (ui.measure(Face::LauncherMedium, 12.0, name) + 20.0).clamp(84.0, max_w);
-    let tag_x = x + (w - tag_w) * 0.5;
-    let tag = [tag_x, tag_y, tag_w, tag_h];
-
-    ui.rounded(tag[0], tag[1], tag[2], tag[3], 2.0, hex(0x050608, 218));
-    ui.border(tag[0], tag[1], tag[2], tag[3], 2.0, hex(0xd9dfe8, 145));
-    ui.rounded(tag[0] + 3.0, tag[1] + 2.0, tag[2] - 6.0, 1.0, 0.0, hex(0xffffff, 45));
-    let fitted = ui.fit_text(Face::LauncherMedium, 12.0, name, tag_w - 14.0);
-    draw_centered_text(ui, Face::LauncherMedium, 12.0, tag, hex(0xffffff, 255), &fitted);
 }
 
 fn draw_account_chip(
@@ -1421,36 +1220,46 @@ struct DrawCtx<'a> {
     /// Live home-tab switch transition: (slide offset in dp, alpha multiplier).
     tab_anim: Option<(f32, f32)>,
     preview_rect: &'a mut Option<[f32; 4]>,
-    /// Width of the visible window in control-local coordinates. Right-side
-    /// home controls and their targets anchor here before the shared offset.
-    surface_right: f32,
+    photos: &'a mut crate::photo_cache::PhotoCache,
 }
 
 impl DrawCtx<'_> {
-    fn active_player_name(&self) -> &str {
-        self.volt_accounts
-            .active()
-            .map(|account| account.name.as_str())
-            .filter(|name| !name.trim().is_empty())
-            .or_else(|| {
-                let name = self.catalog.config.name.as_str();
-                (!name.trim().is_empty()).then_some(name)
-            })
-            .unwrap_or("Player")
-    }
-
     /// Bottom shell per the chosen reference: account chip on the left, a
     /// centred pill dock (Home · Instances · Browse · Settings) and round
     /// Discord / Files buttons on the right. Targets are pushed before any
     /// page content so the shell always wins its taps.
-    fn draw_shell(&mut self, ui: &mut Ui, _w: f32, h: f32, _account_status: &str) {
-        // Black Glassy: far-left vertical rail instead of bottom dock
-        let bar_w = 78.0;
-        let bar_x = 8.0;
-        let bar_y = 12.0;
-        let bar_h = h - 24.0;
-        ui.rounded(bar_x, bar_y, bar_w, bar_h, 18.0, theme::GLASS());
-        ui.border(bar_x, bar_y, bar_w, bar_h, 18.0, theme::GLASS_BORDER());
+    fn draw_shell(&mut self, ui: &mut Ui, w: f32, h: f32, account_status: &str) {
+        let bar_h = 62.0;
+        let by = h - bar_h - 12.0;
+        // Account chip, clamped so it can never run under the centred dock
+        // (six items now: Packs and Shaders download pages joined it).
+        let dock_item = if w >= 1100.0 { 88.0 } else { 76.0 };
+        let dock_left = (w - (dock_item * 7.0 + 20.0)) * 0.5;
+        let chip_w = 200.0_f32.min(w * 0.26).min(dock_left - 26.0).max(120.0);
+        let chip = [6.0, by, chip_w, bar_h];
+        ui.rounded(chip[0], chip[1], chip[2], chip[3], bar_h * 0.5, theme::GLASS());
+        ui.border(chip[0], chip[1], chip[2], chip[3], bar_h * 0.5, theme::GLASS_BORDER());
+        ui.rounded(chip[0] + 8.0, chip[1] + 8.0, bar_h - 16.0, bar_h - 16.0,
+            (bar_h - 16.0) * 0.5, theme::CARD_INNER());
+        let (name, badge) = account_status.split_once(" • ")
+            .map(|(n, b)| (n.to_owned(), b.to_owned()))
+            .unwrap_or_else(|| (account_status.to_owned(), "Offline".to_owned()));
+        let initial = name.chars().next().map(|c| c.to_ascii_uppercase()).unwrap_or('V');
+        draw_centered_text(ui, Face::LauncherMedium, 17.0,
+            [chip[0] + 8.0, chip[1] + 8.0, bar_h - 16.0, bar_h - 16.0],
+            theme::CRIMSON_BRIGHT(), &initial.to_string());
+        let text_x = chip[0] + bar_h + 2.0;
+        let name = ui.fit_text(Face::LauncherMedium, 14.0, &name, chip_w - bar_h - 16.0);
+        ui.text(Face::LauncherMedium, 14.0, text_x, chip[1] + 12.0, theme::TEXT(), &name);
+        let badge = ui.fit_text(Face::LauncherRegular, 11.5, &badge, chip_w - bar_h - 16.0);
+        ui.text(Face::LauncherRegular, 11.5, text_x, chip[1] + 33.0, theme::CRIMSON_BRIGHT(), &badge);
+        self.targets.push((chip, Action::Page(Page::Account)));
+        // Centred dock, now with direct Packs and Shaders download pages.
+        let item_w = dock_item;
+        let dock_w = item_w * 7.0 + 20.0;
+        let dock = [(w - dock_w) * 0.5, by, dock_w, bar_h];
+        ui.rounded(dock[0], dock[1], dock[2], dock[3], bar_h * 0.5, theme::GLASS());
+        ui.border(dock[0], dock[1], dock[2], dock[3], bar_h * 0.5, theme::GLASS_BORDER());
         let items: [(&str, Page, Action); 7] = [
             ("Home", Page::Play, Action::Page(Page::Play)),
             ("Instances", Page::Installed, Action::Profile),
@@ -1460,27 +1269,8 @@ impl DrawCtx<'_> {
             ("Controls", Page::Controls, Action::Page(Page::Controls)),
             ("Settings", Page::Settings, Action::Page(Page::Settings)),
         ];
-        // Seven labelled destinations share the rail's height, so the item
-        // height is derived from the space that is actually there instead of a
-        // fixed table that overflowed on short landscape screens and hid the
-        // last entries (the reported cramped bottom-left column).
-        let count = items.len() as f32;
-        let mut gap = if bar_h < 560.0 { 3.0 } else { 5.0 };
-        let mut item_h = ((bar_h - 8.0) - gap * (count - 1.0)) / count;
-        if item_h > 62.0 {
-            item_h = 62.0;
-            gap = 6.0;
-        } else if item_h > 54.0 {
-            item_h = 54.0;
-            gap = 5.0;
-        }
-        let item_h = item_h.max(34.0);
-        let total = item_h * count + gap * (count - 1.0);
-        let start_y = bar_y + (bar_h - total).max(0.0) * 0.5;
-        let labelled = item_h >= 42.0;
         for (i, (label, icon, action)) in items.iter().enumerate() {
-            let y = start_y + i as f32 * (item_h + gap);
-            let rect = [bar_x + 5.0, y, bar_w - 10.0, item_h];
+            let rect = [dock[0] + 10.0 + i as f32 * item_w, dock[1] + 5.0, item_w - 4.0, bar_h - 10.0];
             let active = match i {
                 0 => self.catalog.page == Page::Play,
                 1 => false,
@@ -1491,27 +1281,50 @@ impl DrawCtx<'_> {
                 _ => matches!(self.catalog.page, Page::Settings | Page::VoltSettings),
             };
             if active {
-                // Black glassy active: subtle inner glow, not white badge
-                ui.rounded(rect[0], rect[1], rect[2], rect[3], 14.0, theme::HOVER());
-                ui.border(rect[0], rect[1], rect[2], rect[3], 14.0, theme::BORDER());
-                // Active left accent line
-                ui.rounded(rect[0] - 1.0, rect[1] + 12.0, 2.5, rect[3] - 24.0, 1.2, theme::TEXT());
+                ui.rounded(rect[0], rect[1], rect[2], rect[3], (bar_h - 10.0) * 0.5, theme::CRIMSON_BADGE());
             }
-            let col = if active { theme::TEXT() } else { theme::MUTED() };
-            if labelled {
-                // Icon centered top, label below – vertical stack
-                let icon_y = rect[1] + (item_h * 0.30).min(18.0);
-                draw_page_icon(ui, *icon, rect[0] + rect[2] * 0.5, icon_y, col);
-                let font = if item_h < 48.0 { 8.5 } else { 10.0 };
-                let fitted = ui.fit_text(Face::LauncherMedium, font, label, rect[2] - 2.0);
-                draw_centered_text(ui, Face::LauncherMedium, font,
-                    [rect[0], icon_y + 10.0, rect[2], (rect[1] + rect[3] - icon_y - 10.0).max(12.0)],
-                    if active { theme::TEXT() } else { theme::DIM() }, &fitted);
-            } else {
-                draw_page_icon(ui, *icon, rect[0] + rect[2] * 0.5, rect[1] + rect[3] * 0.5, col);
-            }
+            let col = if active { theme::CRIMSON_BRIGHT() } else { theme::MUTED() };
+            draw_page_icon(ui, *icon, rect[0] + rect[2] * 0.5, rect[1] + 17.0, col);
+            draw_centered_text(ui, Face::LauncherMedium, 10.5,
+                [rect[0], rect[1] + 28.0, rect[2], 18.0],
+                if active { theme::TEXT() } else { theme::MUTED() }, label);
             self.targets.push((rect, *action));
         }
+        // Round Discord and Files buttons.
+        let fab = bar_h - 6.0;
+        let discord = [w - 6.0 - fab * 2.0 - 10.0, by + 3.0, fab, fab];
+        // Liquid Glass stays strictly monochrome, so the Discord button is
+        // silver glass there instead of brand blue.
+        let discord_bg = if theme::liquid() { theme::GLASS() }
+            else { horizon_client::ui_theme::color::hex(0x5865f2, 255) };
+        ui.rounded(discord[0], discord[1], discord[2], discord[3], fab * 0.5, discord_bg);
+        if theme::liquid() {
+            ui.border(discord[0], discord[1], discord[2], discord[3], fab * 0.5,
+                theme::GLASS_BORDER());
+        }
+        draw_discord_icon(ui, discord[0] + fab * 0.5, discord[1] + fab * 0.5, theme::TEXT(), discord_bg);
+        self.targets.push((discord, Action::Discord));
+        let files = [w - 6.0 - fab, by + 3.0, fab, fab];
+        ui.rounded(files[0], files[1], files[2], files[3], fab * 0.5, theme::GLASS());
+        ui.border(files[0], files[1], files[2], files[3], fab * 0.5, theme::GLASS_BORDER());
+        let (fx, fy) = (files[0] + fab * 0.5, files[1] + fab * 0.5);
+        ui.rounded(fx - 1.6, fy - 9.0, 3.2, 12.0, 1.6, theme::MUTED());
+        {
+            let white = ui.atlas_ref().white;
+            let uv = [(white.u0 + white.u1) * 0.5, (white.v0 + white.v1) * 0.5];
+            let color = theme::MUTED();
+            let points = [
+                [ui.to_batch(fx - 6.0), ui.to_batch(fy + 1.0)],
+                [ui.to_batch(fx + 6.0), ui.to_batch(fy + 1.0)],
+                [ui.to_batch(fx), ui.to_batch(fy + 8.0)],
+            ];
+            for pos in points {
+                ui.batch_mut().vertices.push(horizon_client::hud::HudVertex {
+                    pos, uv, color, depth: 0.0, glint_uv: [0.0, 0.0],
+                });
+            }
+        }
+        self.targets.push((files, Action::Page(Page::Installed)));
     }
 
     #[allow(dead_code)]
@@ -1717,120 +1530,9 @@ impl DrawCtx<'_> {
         }
     }
 
-    /// The persistent Home navigation, including while a right-rail tab is open.
-    fn draw_liquid_left_rail(&mut self, ui: &mut Ui, area: [f32; 4]) {
-        let [ax, ay, _, h] = area;
-        let rail_x = ax + LIQUID_LEFT_RAIL_INSET;
-        let rail_y = ay + 12.0;
-        let rail_h = (h - 24.0).max(0.0);
-        ui.rounded(rail_x, rail_y, LIQUID_LEFT_RAIL_WIDTH, rail_h, 18.0, theme::GLASS());
-        ui.border(rail_x, rail_y, LIQUID_LEFT_RAIL_WIDTH, rail_h, 18.0, theme::GLASS_BORDER());
-        let nav: [(&str, Page, Action); 7] = [
-            ("Home", Page::Play, Action::Page(Page::Play)),
-            ("Instances", Page::Installed, Action::Profile),
-            ("Browse", Page::Mods, Action::Page(Page::Mods)),
-            ("Packs", Page::Packs, Action::Page(Page::Packs)),
-            ("Shaders", Page::Shaders, Action::Page(Page::Shaders)),
-            ("Controls", Page::Controls, Action::Page(Page::Controls)),
-            ("Settings", Page::Settings, Action::Page(Page::Settings)),
-        ];
-        let (item_h, gap) = if rail_h < 400.0 {
-            (40.0, 4.0)
-        } else if rail_h < 520.0 {
-            (50.0, 6.0)
-        } else {
-            (62.0, 6.0)
-        };
-        let total = nav.len() as f32 * item_h + (nav.len() as f32 - 1.0) * gap;
-        let start_y = rail_y + (rail_h - total).max(0.0) * 0.5;
-        for (i, (label, page, action)) in nav.iter().enumerate() {
-            let y = start_y + i as f32 * (item_h + gap);
-            let rect = [rail_x + 6.0, y, LIQUID_LEFT_RAIL_WIDTH - 12.0, item_h];
-            let active = *page == Page::Play && self.catalog.page == Page::Play;
-            if active {
-                ui.rounded(rect[0], rect[1], rect[2], rect[3], 14.0, theme::HOVER());
-                ui.border(rect[0], rect[1], rect[2], rect[3], 14.0, theme::BORDER());
-                let inset = (item_h * 0.2).max(7.0);
-                ui.rounded(rect[0] - 1.0, rect[1] + inset, 2.5, rect[3] - inset * 2.0, 1.2, theme::TEXT());
-            }
-            let (icon_y, label_y, font) = if item_h < 48.0 {
-                (13.0, 22.0, 9.0)
-            } else if item_h < 56.0 {
-                (16.0, 26.0, 9.5)
-            } else {
-                (18.0, 31.0, 10.0)
-            };
-            let col = if active { theme::TEXT() } else { theme::MUTED() };
-            draw_page_icon(ui, *page, rect[0] + rect[2] * 0.5, rect[1] + icon_y, col);
-            draw_centered_text(
-                ui,
-                Face::LauncherMedium,
-                font,
-                [rect[0], rect[1] + label_y, rect[2], (item_h - label_y).max(16.0)],
-                if active { theme::TEXT() } else { theme::DIM() },
-                label,
-            );
-            self.targets.push((rect, *action));
-        }
-    }
-
-    /// The destination rail (Worlds / Servers / Shots / Replays / Boost),
-    /// icon-only like the left navigation and visible on Home and on every
-    /// secondary tab alike.
-    fn draw_liquid_right_rail(&mut self, ui: &mut Ui, area: [f32; 4]) {
-        let (surface_right, home_tab, page) =
-            (self.surface_right, self.home_tab, self.catalog.page);
-        draw_right_rail(ui, area, surface_right, home_tab, page, &mut self.targets);
-    }
-
-    /// Draws the destination rail and returns `area` narrowed so its content
-    /// stays clear of it. Catalog pages keep the shell's left navigation, so
-    /// the right side behaves exactly as it does on Home.
-    fn with_right_rail(&mut self, ui: &mut Ui, area: [f32; 4]) -> [f32; 4] {
-        if !theme::liquid() {
-            return area;
-        }
-        let (surface_right, home_tab, page) =
-            (self.surface_right, self.home_tab, self.catalog.page);
-        let surface = [0.0, 0.0, surface_right, ui.h];
-        draw_right_rail(ui, surface, surface_right, home_tab, page, &mut self.targets);
-        let reserve =
-            LIQUID_RIGHT_RAIL_INSET + LIQUID_RIGHT_RAIL_WIDTH + LIQUID_RAIL_CONTENT_GAP;
-        [area[0], area[1], (area[2] - reserve).max(160.0), area[3]]
-    }
-
-    /// The Discord link as its own glass row. It used to float beside the
-    /// account chip, crowding three controls into one corner.
-    fn draw_discord_row(&mut self, ui: &mut Ui, rect: [f32; 4]) {
-        if rect[2] < 64.0 || rect[3] < 26.0 {
-            return;
-        }
-        let v_start = ui.batch_mut().vertices.len();
-        ui.rounded(rect[0], rect[1], rect[2], rect[3], rect[3] * 0.5, theme::GLASS());
-        ui.border(rect[0], rect[1], rect[2], rect[3], rect[3] * 0.5, theme::GLASS_BORDER());
-        draw_discord_icon(ui, rect[0] + rect[3] * 0.55, rect[1] + rect[3] * 0.5, theme::TEXT(), theme::GLASS());
-        let label = ui.fit_text(Face::LauncherMedium, 11.5, "Join the Discord", rect[2] - rect[3] - 10.0);
-        ui.text(Face::LauncherMedium, 11.5, rect[0] + rect[3] + 2.0,
-            text_vcenter(rect[1], rect[3], 11.5), theme::MUTED(), &label);
-        press_scale(ui, v_start, rect, Action::Discord);
-        self.targets.push((rect, Action::Discord));
-    }
-
-    /// Draw the compact source switch as one fitted button instead of
-    /// sacrificing catalog space to four source pills.
-    fn draw_shader_source_button(&mut self, ui: &mut Ui, rect: [f32; 4]) {
-        let origin = self.catalog.config.shader_source;
-        let next = origin.next_shader_source();
-        let label = format!("Source · {}", origin.label());
-        ui.rounded(rect[0], rect[1], rect[2], rect[3], 8.0, theme::CARD_INNER());
-        ui.border(rect[0], rect[1], rect[2], rect[3], 8.0, theme::BORDER());
-        let label = ui.fit_text(Face::LauncherMedium, 11.5, &label, (rect[2] - 12.0).max(0.0));
-        draw_centered_text(ui, Face::LauncherMedium, 11.5, rect, theme::TEXT(), &label);
-        self.targets.push((rect, Action::ShaderSource(next)));
-    }
-
     /// The instance header, actions and tabs shared by Home and its Mods tab.
     fn draw_instance_page(&mut self, ui: &mut Ui, area: [f32; 4], _compact: bool, account_status: &str) {
+        let [x, y, w, h] = area;
         // Browse (dock) lands on the bundled official-mods list.
         if self.catalog.page == Page::Mods {
             self.draw_mods_landing(ui, area, account_status);
@@ -1838,19 +1540,9 @@ impl DrawCtx<'_> {
         }
         let installed = horizon_client::official_install::ready(self.home);
 
-        // Secondary Home views retain the Liquid Glass left navigation rail;
-        // keep their content and hit targets clear of it.
+        // Secondary home views (Worlds, Multiplayer, Shots, Logs): a back
+        // chip and title, then the existing tab content.
         if self.home_tab != HomeTab::Overview {
-            let liquid = theme::liquid();
-            if liquid {
-                self.draw_liquid_left_rail(ui, area);
-            }
-            let center = if liquid {
-                liquid_home_tab_area(area, self.surface_right)
-            } else {
-                area
-            };
-            let [x, y, w, h] = center;
             let back = [x, y, 92.0, 38.0];
             ui.rounded(back[0], back[1], back[2], back[3], 19.0, theme::GLASS());
             ui.border(back[0], back[1], back[2], back[3], 19.0, theme::GLASS_BORDER());
@@ -1858,25 +1550,18 @@ impl DrawCtx<'_> {
             self.targets.push((back, Action::HomeTab(HomeTab::Overview)));
             let title = match self.home_tab {
                 HomeTab::Worlds => "Worlds",
-                HomeTab::Multiplayer => "Servers",
-                HomeTab::Screenshots => "Screenshots",
+                HomeTab::Multiplayer => "Multiplayer",
+                HomeTab::Screenshots => "Captures",
                 HomeTab::Replays => "Replays",
-                HomeTab::VoltBoost => "Volt Boost",
                 _ => "Launcher log",
             };
-            let title_fit = ui.fit_text(Face::Display, 21.0, title, (w - 106.0).max(24.0));
-            ui.text(Face::Display, 21.0, x + 106.0, y + 5.0, theme::TEXT(), &title_fit);
+            ui.text(Face::Display, 21.0, x + 106.0, y + 5.0, theme::TEXT(), title);
             let body = [x, y + 50.0, w, (h - 50.0).max(0.0)];
             let body_v_start = ui.batch_mut().vertices.len();
             self.draw_home_tab(ui, body, account_status, installed);
             if let Some((dx, alpha)) = self.tab_anim {
                 ui.animate_vertices(body_v_start, dx, 0.0, 1.0,
                     [x + w * 0.5, body[1] + body[3] * 0.5], alpha);
-            }
-            // The destination rail stays put, so Worlds / Servers / Shots /
-            // Replays / Boost are one tap apart instead of a trip Home first.
-            if liquid {
-                self.draw_liquid_right_rail(ui, area);
             }
             return;
         }
@@ -1885,11 +1570,12 @@ impl DrawCtx<'_> {
         self.draw_lobby_home(ui, area, account_status);
     }
 
-    /// The Liquid Glass home, built to the chosen silver mockup: moonlit
-    /// vista behind, chrome VOLT brand top-left, glass account chip
-    /// top-right over the Worlds / Servers cards, one enormous chrome-rimmed
-    /// PLAY pill in the centre, a floating icon dock below it, and quiet
-    /// utility chips bottom-left. Strictly monochrome.
+    /// The Liquid Glass home: moonlit vista behind, chrome VOLT brand
+    /// top-left, glass account chip and the Discord button top-right, a
+    /// destination rail down the left edge, a gallery rail (Worlds / Server /
+    /// Shots / Replay) down the right edge, the chrome-rimmed PLAY pill at
+    /// the middle-bottom, and a spaced chip row along the bottom-left.
+    /// Strictly monochrome.
     fn draw_liquid_home(&mut self, ui: &mut Ui, area: [f32; 4], account_status: &str) {
         use horizon_client::official_install::InstallStage;
         use horizon_client::ui_theme::color::hex;
@@ -1901,34 +1587,33 @@ impl DrawCtx<'_> {
         let m = if compact { 12.0 } else { 18.0 };
         let shimmer = theme::ember();
 
-        // ---- Far-left rail: all navigation (dashboard) ----
-        self.draw_liquid_left_rail(ui, area);
-
-        // ---- Brand, top-left (shifted right of rail) ----
-        let brand_x = ax + LIQUID_LEFT_RAIL_INSET + LIQUID_LEFT_RAIL_WIDTH + 16.0;
-        ui.volt_logo(brand_x, ay + m, 34.0, 34.0);
-        ui.text(Face::Display, 21.0, brand_x + 44.0, ay + m + 4.0, hex(0xf2f4f8, 255), "VOLT");
+        // ---- Brand, top-left: V logo + VOLT, playtime whispered under it ----
+        ui.volt_logo(ax + m, ay + m, 34.0, 34.0);
+        ui.text(Face::Display, 21.0, ax + m + 44.0, ay + m + 4.0, hex(0xf2f4f8, 255), "VOLT");
         let secs = self.catalog.config.play_seconds;
-        let time = if secs == 0 { "0 h".to_owned() } else if secs < 3600 { format!("{} min", (secs / 60).max(1)) } else { format!("{} h", secs / 3600) };
-        ui.text(Face::LauncherRegular, 10.5, brand_x + 44.0, ay + m + 26.0, theme::DIM(), &format!("26.3 · {time} played"));
+        let time = if secs == 0 { "0 h".to_owned() }
+            else if secs < 3600 { format!("{} min", (secs / 60).max(1)) }
+            else { format!("{} h", secs / 3600) };
+        ui.text(Face::LauncherRegular, 10.5, ax + m + 44.0, ay + m + 26.0, theme::DIM(),
+            &format!("26.3 · {time} played"));
 
-        // ---- Account chip, top-right: skin head + name -> Account page ----
-        let (name, badge) = account_status.split_once(" • ").map(|(n,b)| (n.to_owned(), b.to_owned())).unwrap_or_else(|| (account_status.to_owned(), "Offline".to_owned()));
+        // ---- Account chip, top-right ----
+        let (name, badge) = account_status.split_once(" • ")
+            .map(|(n, b)| (n.to_owned(), b.to_owned()))
+            .unwrap_or_else(|| (account_status.to_owned(), "Offline".to_owned()));
         let chip_h = 44.0;
-        let chip_room = (indicator_right_room(self.surface_right) - 8.0).max(132.0);
         let chip_w = (ui.measure(Face::LauncherMedium, 13.5, &name) + chip_h + 26.0)
             .min(w * 0.30)
-            .min(chip_room)
             .max(132.0);
-        let chip = [ax + self.surface_right - m - chip_w, ay + m, chip_w, chip_h];
+        let chip = [ax + w - m - chip_w, ay + m, chip_w, chip_h];
         ui.rounded(chip[0], chip[1], chip[2], chip[3], chip_h * 0.5, theme::GLASS());
         ui.border(chip[0], chip[1], chip[2], chip[3], chip_h * 0.5, theme::GLASS_BORDER());
-        // Skin head avatar (small dark glass square with initial fallback, will show skin texture when available)
-        ui.rounded(chip[0] + 6.0, chip[1] + 6.0, chip_h - 12.0, chip_h - 12.0, (chip_h - 12.0) * 0.5, theme::CARD_INNER());
+        ui.rounded(chip[0] + 6.0, chip[1] + 6.0, chip_h - 12.0, chip_h - 12.0,
+            (chip_h - 12.0) * 0.5, theme::GLASS_INNER());
         let initial = name.chars().next().map(|c| c.to_ascii_uppercase()).unwrap_or('V');
-        draw_centered_text(ui, Face::LauncherMedium, 15.0, [chip[0] + 6.0, chip[1] + 6.0, chip_h - 12.0, chip_h - 12.0], hex(0xf2f4f8, 255), &initial.to_string());
-        // Try to overlay tiny skin head if we have a custom skin texture (future: replace initial with head crop)
-        // For now the slot is ready for skin_preview::draw_player_3d head crop.
+        draw_centered_text(ui, Face::LauncherMedium, 15.0,
+            [chip[0] + 6.0, chip[1] + 6.0, chip_h - 12.0, chip_h - 12.0],
+            hex(0xf2f4f8, 255), &initial.to_string());
         let text_x = chip[0] + chip_h + 4.0;
         let name_fit = ui.fit_text(Face::LauncherMedium, 13.5, &name, chip_w - chip_h - 16.0);
         ui.text(Face::LauncherMedium, 13.5, text_x, chip[1] + 7.0, theme::TEXT(), &name_fit);
@@ -1936,36 +1621,102 @@ impl DrawCtx<'_> {
         ui.text(Face::LauncherRegular, 10.5, text_x, chip[1] + 25.0, theme::DIM(), &badge_fit);
         self.targets.push((chip, Action::Page(Page::Account)));
 
-        // Dashboard: Worlds/Servers removed per request — clean center-focus only
-
-        // Black glassy home is center-focused: no floating bottom dock (navigation is far-left rail)
-        let _bar_h = if compact { 54.0 } else { 60.0 };
-
-        // ---- The hero: Play at middle-bottom, 3D player above it ----
-        let play_h = if compact { 68.0 } else { 82.0 };
-        // Play sits on the bottom edge of the content column, centred exactly
-        // between the two rails: the old -22 offset read as "left of centre"
-        // because the right column is wider than the left.
-        let py0 = ay + h - m - play_h;
-        let play_w = if compact { 236.0 } else { 320.0 };
-        // center between rails (left 78 + right 88) so Play doesn't overlap sidebars
-        let rail_w2 = 78.0;
-        let r_rail_w2 = 88.0;
-        let content_w = (w - rail_w2 - r_rail_w2 - 32.0).max(play_w + 20.0);
-        let px0 = ax + rail_w2 + 16.0 + (content_w - play_w)*0.5;
-        let slab = [px0, py0, play_w, play_h];
-        // ---- 3D player character above Play (dashboard spec) ----
-        let char_w = (w * 0.26).clamp(150.0, 260.0);
-        let char_h = (h * 0.40).clamp(160.0, 300.0).min((py0 - (ay + m + 56.0)).max(100.0));
-        if char_h >= 100.0 {
-            let char_x = ax + rail_w2 + 16.0 + (content_w - char_w)*0.5;
-            let char_y = (py0 - char_h - 12.0).max(ay + m + 52.0);
-            let char_rect = [char_x, char_y, char_w, char_h];
-            let default_uuid = self.volt_accounts.active().map(|a| a.uuid_u128()).unwrap_or(0);
-            crate::skin_preview::draw_player_3d(ui, char_rect, self.preview_yaw, self.preview_pitch, self.idle_phase, self.preview_vel_yaw, 2, 3, self.volt_accounts.active_skin_preview(), self.volt_accounts.active_cape_preview(), default_uuid);
-            draw_player_nameplate(ui, char_rect, self.active_player_name());
-            *self.preview_rect = Some(char_rect);
+        // ---- Discord, moved up: a round glass button under the account chip ----
+        let fab = 44.0;
+        let help = [ax + w - m - fab, chip[1] + chip_h + 12.0, fab, fab];
+        {
+            let v_start = ui.batch_mut().vertices.len();
+            ui.rounded(help[0], help[1], help[2], help[3], fab * 0.5, theme::GLASS());
+            ui.border(help[0], help[1], help[2], help[3], fab * 0.5, theme::GLASS_BORDER());
+            draw_headset_icon(ui, help[0] + fab * 0.5, help[1] + fab * 0.5, hex(0xe8ecf4, 230));
+            press_scale(ui, v_start, help, Action::Discord);
+            self.targets.push((help, Action::Discord));
         }
+
+        // ---- The hero: the chrome-rimmed glass PLAY pill, middle-bottom ----
+        let play_h = if compact { 64.0 } else { 76.0 };
+        let play_w = if compact { 236.0 } else { 300.0 };
+        let py0 = ay + h - m - play_h;
+        let px0 = ax + (w - play_w) * 0.5;
+
+        // ---- Left rail: the launcher's destinations, flush down the left edge ----
+        let rail_items: [(&str, Page, Action); 7] = [
+            ("Home", Page::Play, Action::Page(Page::Play)),
+            ("Instances", Page::Installed, Action::Profile),
+            ("Browse", Page::Mods, Action::Page(Page::Mods)),
+            ("Packs", Page::Packs, Action::Page(Page::Packs)),
+            ("Shaders", Page::Shaders, Action::Page(Page::Shaders)),
+            ("Controls", Page::Controls, Action::Page(Page::Controls)),
+            ("Settings", Page::Settings, Action::Page(Page::Settings)),
+        ];
+        let rail_top = ay + m + 54.0;
+        let rail_bottom = ay + h - m;
+        let rail_w = if compact { 50.0 } else { 64.0 };
+        let step = ((rail_bottom - rail_top - 14.0) / rail_items.len() as f32)
+            .min(64.0)
+            .max(34.0);
+        let labels = !compact && step >= 46.0;
+        let rail_h = (step * rail_items.len() as f32 + 14.0).min(rail_bottom - rail_top);
+        let rail = [ax + 10.0, rail_top, rail_w, rail_h];
+        ui.rounded(rail[0], rail[1], rail[2], rail[3], 18.0, theme::GLASS());
+        ui.border(rail[0], rail[1], rail[2], rail[3], 18.0, theme::GLASS_BORDER());
+        for (i, (label, page, action)) in rail_items.iter().enumerate() {
+            let rect = [rail[0] + 3.0, rail[1] + 7.0 + i as f32 * step, rail_w - 6.0, step];
+            if rect[1] + rect[3] > rail[1] + rail[3] {
+                break;
+            }
+            let active = i == 0;
+            let cx = rect[0] + rect[2] * 0.5;
+            let cy = rect[1] + if labels { step * 0.5 - 7.0 } else { step * 0.5 };
+            if active {
+                ui.rounded(rect[0] + 2.0, rect[1] + 2.0, rect[2] - 4.0, rect[3] - 4.0, 12.0,
+                    hex(0xffffff, (18.0 + 12.0 * shimmer) as u8));
+                ui.rounded(rail[0] - 1.0, cy - 9.0, 3.0, 18.0, 1.5, hex(0xf2f5fa, 235));
+            }
+            draw_page_icon(ui, *page, cx, cy,
+                if active { hex(0xffffff, 255) } else { hex(0xc9cfdb, 185) });
+            if labels {
+                draw_centered_text(ui, Face::LauncherMedium, 9.5,
+                    [rect[0], cy + 11.0, rect[2], 12.0],
+                    if active { hex(0xf2f5fa, 235) } else { hex(0xc9cfdb, 165) }, label);
+            }
+            self.targets.push((rect, *action));
+        }
+
+        // ---- Right rail: the play-space galleries, flush down the right edge ----
+        let gallery_items: [(&str, u8, Action); 4] = [
+            ("Worlds", 0, Action::HomeTab(HomeTab::Worlds)),
+            ("Server", 1, Action::HomeTab(HomeTab::Multiplayer)),
+            ("Shots", 2, Action::HomeTab(HomeTab::Screenshots)),
+            ("Replay", 5, Action::HomeTab(HomeTab::Replays)),
+        ];
+        let gal_top = help[1] + fab + 12.0;
+        let gal_bottom = ay + h - m;
+        let gal_step = ((gal_bottom - gal_top - 14.0) / gallery_items.len() as f32)
+            .min(68.0)
+            .max(34.0);
+        let gal_labels = !compact && gal_step >= 46.0;
+        let gal_h = (gal_step * gallery_items.len() as f32 + 14.0).min(gal_bottom - gal_top);
+        let gal = [ax + w - 10.0 - rail_w, gal_top, rail_w, gal_h];
+        ui.rounded(gal[0], gal[1], gal[2], gal[3], 18.0, theme::GLASS());
+        ui.border(gal[0], gal[1], gal[2], gal[3], 18.0, theme::GLASS_BORDER());
+        for (i, (label, glyph, action)) in gallery_items.iter().enumerate() {
+            let rect = [gal[0] + 3.0, gal[1] + 7.0 + i as f32 * gal_step, rail_w - 6.0, gal_step];
+            if rect[1] + rect[3] > gal[1] + gal[3] {
+                break;
+            }
+            let cx = rect[0] + rect[2] * 0.5;
+            let cy = rect[1] + if gal_labels { gal_step * 0.5 - 7.0 } else { gal_step * 0.5 };
+            let v_start = ui.batch_mut().vertices.len();
+            draw_tile_icon(ui, *glyph, cx, cy, hex(0xc9cfdb, 185));
+            if gal_labels {
+                draw_centered_text(ui, Face::LauncherMedium, 9.5,
+                    [rect[0], cy + 11.0, rect[2], 12.0], hex(0xc9cfdb, 165), label);
+            }
+            press_scale(ui, v_start, rect, *action);
+            self.targets.push((rect, *action));
+        }
+        let slab = [px0, py0, play_w, play_h];
         if installing {
             ui.rounded(slab[0], slab[1], slab[2], slab[3], play_h * 0.5, theme::GLASS());
             ui.border(slab[0], slab[1], slab[2], slab[3], play_h * 0.5,
@@ -1985,26 +1736,26 @@ impl DrawCtx<'_> {
                 hex(0xf2f5fa, 255));
         } else {
             let v_start = ui.batch_mut().vertices.len();
-            // Black glassy: subtle dark aura, no white chrome
-            let halo = 4.0 + 3.0 * shimmer;
+            // Soft white aura breathing with the moon shimmer.
+            let halo = 6.0 + 5.0 * shimmer;
             ui.rounded(slab[0] - halo, slab[1] - halo, slab[2] + 2.0 * halo,
                 slab[3] + 2.0 * halo, (play_h + 2.0 * halo) * 0.5,
-                hex(0x111114, (10.0 + 10.0 * shimmer) as u8));
-            // Pure black glass body – OLED true black
-            ui.rounded(slab[0], slab[1], slab[2], slab[3], play_h * 0.5, theme::CARD());
-            // Black glass rim: very subtle highlight, not white chrome
+                hex(0xdfe6f2, (14.0 + 14.0 * shimmer) as u8));
+            // Clear glass body.
+            ui.rounded(slab[0], slab[1], slab[2], slab[3], play_h * 0.5, theme::GLASS());
+            // Chrome rim: a bright outer ring and a quieter inner one.
             ui.border(slab[0], slab[1], slab[2], slab[3], play_h * 0.5,
-                hex(0xffffff, (22.0 + 12.0 * shimmer) as u8));
-            ui.border(slab[0] + 2.0, slab[1] + 2.0, slab[2] - 4.0, slab[3] - 4.0,
-                (play_h - 4.0) * 0.5, hex(0xffffff, 12));
-            // Subtle inner highlight – dark, not white
+                hex(0xffffff, (150.0 + 70.0 * shimmer) as u8));
+            ui.border(slab[0] + 2.5, slab[1] + 2.5, slab[2] - 5.0, slab[3] - 5.0,
+                (play_h - 5.0) * 0.5, hex(0xffffff, 46));
+            // Glossy highlight sweeping the top of the capsule.
             ui.rounded(slab[0] + play_h * 0.28, slab[1] + 5.0,
-                slab[2] - play_h * 0.56, play_h * 0.28, play_h * 0.14,
-                hex(0xffffff, 10));
+                slab[2] - play_h * 0.56, play_h * 0.34, play_h * 0.17,
+                hex(0xffffff, 34));
             let label = if installed { "PLAY" }
                 else if self.error.is_some() { "RETRY" } else { "DOWNLOAD" };
             let font = if compact { 24.0 } else { 28.0 };
-            draw_centered_text(ui, Face::Display, font, slab, theme::TEXT(), label);
+            draw_centered_text(ui, Face::Display, font, slab, hex(0xffffff, 255), label);
             press_scale(ui, v_start, slab, Action::Play);
             self.targets.insert(0, (slab, Action::Play));
         }
@@ -2017,39 +1768,28 @@ impl DrawCtx<'_> {
                 theme::STATUS_BAD(), &e);
         }
 
-        // ---- Discord, in its own glass row under the account chip. It used
-        // to float beside the chip, which crowded three controls into one
-        // corner of the dashboard.
-        let row_h = 38.0;
-        let row_y = chip[1] + chip_h + 8.0;
-        let row_w = chip_w.min((indicator_right_room(self.surface_right) - 8.0).max(0.0)).max(chip_w * 0.75);
-        if row_w >= 132.0 {
-            self.draw_discord_row(ui, [chip[0], row_y, row_w, row_h]);
+        // ---- Quiet utility chips: a spaced row along the bottom, between
+        // the left rail and the PLAY pill, never stacked or overlapping ----
+        let chips: [(&str, Action); 3] = [
+            ("Logs", Action::HomeTab(HomeTab::Console)),
+            ("Files", Action::Page(Page::Installed)),
+            ("Account", Action::Page(Page::Account)),
+        ];
+        let chip_small_h = 28.0;
+        let mut chip_x = rail[0] + rail_w + 14.0;
+        let chip_y = ay + h - m - chip_small_h;
+        for (label, action) in chips.iter() {
+            let cw = ui.measure(Face::LauncherMedium, 11.0, label) + 24.0;
+            if chip_x + cw > px0 - 12.0 {
+                break;
+            }
+            let rect = [chip_x, chip_y, cw, chip_small_h];
+            ui.rounded(rect[0], rect[1], rect[2], rect[3], chip_small_h * 0.5, theme::GLASS());
+            ui.border(rect[0], rect[1], rect[2], rect[3], chip_small_h * 0.5, hex(0xffffff, 26));
+            draw_centered_text(ui, Face::LauncherMedium, 11.0, rect, hex(0xc9cfdb, 200), label);
+            self.targets.push((rect, *action));
+            chip_x += cw + 10.0;
         }
-
-        // ---- Bottom-left: the profile chip in its own column, clear of Play.
-        let col_x = ax + rail_w2 + 16.0;
-        let col_room = ((px0 - col_x) - 10.0).max(0.0);
-        let acc_h = 40.0;
-        let acc = [col_x, ay + h - m - acc_h, col_room.min(196.0), acc_h];
-        if acc[2] >= 88.0 {
-            ui.rounded(acc[0], acc[1], acc[2], acc[3], acc_h * 0.5, theme::GLASS());
-            ui.border(acc[0], acc[1], acc[2], acc[3], acc_h * 0.5, theme::GLASS_BORDER());
-            ui.rounded(acc[0] + 6.0, acc[1] + 6.0, acc_h - 12.0, acc_h - 12.0,
-                (acc_h - 12.0) * 0.5, theme::CARD_INNER());
-            let initial = name.chars().next().map(|c| c.to_ascii_uppercase()).unwrap_or('V');
-            draw_centered_text(ui, Face::LauncherMedium, 14.0,
-                [acc[0] + 6.0, acc[1] + 6.0, acc_h - 12.0, acc_h - 12.0],
-                hex(0xf2f4f8, 255), &initial.to_string());
-            let fit = ui.fit_text(Face::LauncherMedium, 11.5, &name, acc[2] - acc_h - 12.0);
-            ui.text(Face::LauncherMedium, 11.5, acc[0] + acc_h,
-                text_vcenter(acc[1], acc_h, 11.5), theme::MUTED(), &fit);
-            self.targets.push((acc, Action::Page(Page::Account)));
-        }
-
-        // ---- Right rail: Worlds, Servers, Shots, Replays, Boost. Navigation
-        // only; each tab's content lives in the centre column. ----
-        self.draw_liquid_right_rail(ui, area);
     }
 
     /// The lobby home: the player's 3D character takes centre stage over
@@ -2079,25 +1819,19 @@ impl DrawCtx<'_> {
 
         // ---- Quiet icon squares, top-right ----
         let sq = if compact { 38.0 } else { 42.0 };
-        let squares: [(Option<Page>, Action); 6] = [
-            (Some(Page::Controls), Action::Page(Page::Controls)),
-            (Some(Page::Installed), Action::Page(Page::Installed)),
-            (Some(Page::VoltSettings), Action::Page(Page::VoltSettings)),
-            (Some(Page::Account), Action::Page(Page::Account)),
-            (None, Action::Discord),
-            (Some(Page::Settings), Action::Page(Page::Settings)),
+        let squares: [(Page, Action); 5] = [
+            (Page::Controls, Action::Page(Page::Controls)),
+            (Page::Installed, Action::Page(Page::Installed)),
+            (Page::VoltSettings, Action::Page(Page::VoltSettings)),
+            (Page::Account, Action::Page(Page::Account)),
+            (Page::Settings, Action::Page(Page::Settings)),
         ];
-        let right = ax + self.surface_right;
         for (i, (page, action)) in squares.iter().enumerate() {
-            // Keep the right edge aligned with the left cards' flush screen edge.
-            let rect = [right - (squares.len() - i) as f32 * (sq + 8.0) + 8.0, ay + m, sq, sq];
+            // Flush to the screen's right edge, where the rail below joins.
+            let rect = [ax + w - (squares.len() - i) as f32 * (sq + 8.0) + 8.0, ay + m, sq, sq];
             ui.rounded(rect[0], rect[1], rect[2], rect[3], 10.0, theme::GLASS());
             ui.border(rect[0], rect[1], rect[2], rect[3], 10.0, theme::GLASS_BORDER());
-            if let Some(page) = page {
-                draw_page_icon(ui, *page, rect[0] + sq * 0.5, rect[1] + sq * 0.5, theme::TEXT());
-            } else {
-                draw_discord_icon(ui, rect[0] + sq * 0.5, rect[1] + sq * 0.5, theme::TEXT(), theme::GLASS());
-            }
+            draw_page_icon(ui, *page, rect[0] + sq * 0.5, rect[1] + sq * 0.5, theme::TEXT());
             self.targets.push((rect, *action));
         }
 
@@ -2124,7 +1858,6 @@ impl DrawCtx<'_> {
             self.volt_accounts.active_cape_preview(),
             default_uuid,
         );
-        draw_player_nameplate(ui, char_rect, self.active_player_name());
         *self.preview_rect = Some(char_rect);
 
         // ---- Pixel-art destination slabs, left column ----
@@ -2169,22 +1902,22 @@ impl DrawCtx<'_> {
         }
 
         // ---- Right rail: the quieter destinations as small chips, on a
-        // glass rail aligned flush with the left destination cards.
-        // The top icon row and chip rail share that right edge.
+        // glass rail that runs flush to the screen edge and joins the
+        // top icon row with no gap, so the two bars read as one piece.
         let chips: [(&str, u8, Action); 8] = [
             ("Worlds", 0, Action::HomeTab(HomeTab::Worlds)),
-            ("Servers", 1, Action::HomeTab(HomeTab::Multiplayer)),
-            ("Shots", 2, Action::HomeTab(HomeTab::Screenshots)),
-            ("Replays", 7, Action::HomeTab(HomeTab::Replays)),
-            ("Volt Boost", 4, Action::OpenVoltBoost),
             ("Controls", 6, Action::Page(Page::Controls)),
+            ("Servers", 1, Action::HomeTab(HomeTab::Multiplayer)),
+            ("Replays", 2, Action::HomeTab(HomeTab::Replays)),
+            ("Shots", 2, Action::HomeTab(HomeTab::Screenshots)),
             ("Logs", 3, Action::HomeTab(HomeTab::Console)),
             ("Packs", 5, Action::Page(Page::Packs)),
+            ("Boost", 4, Action::OpenVoltBoost),
         ];
         let chip_w = 96.0;
         let chip_h = 27.0;
         let rail_w = chip_w + 14.0;
-        let rail_x = ax + self.surface_right - rail_w;
+        let rail_x = ax + w - rail_w;
         let chip_x = rail_x + 7.0;
         let mut chip_y = ay + m + sq + 8.0;
         let shown = chips
@@ -2287,232 +2020,18 @@ impl DrawCtx<'_> {
             self.targets.push((acc, Action::Account));
         }
 
-    }
-
-    fn draw_fullscreen_viewer(&mut self, ui: &mut Ui, area: [f32; 4]) {
-        let [x, y, w, h] = area;
-        let game_home = self.catalog.config.game_home(&self.home);
-        let viewer = self.catalog.viewer;
-        let mut image_key = None;
-        let title = match viewer {
-            Some(crate::catalog::ViewerItem::Screenshot(index)) => {
-                let name = self.catalog.screenshots.get(index).cloned().unwrap_or_default();
-                if !name.is_empty() {
-                    image_key = Some(self.catalog.queue_local_preview(
-                        &game_home.join("screenshots").join(&name),
-                        true,
-                    ));
-                }
-                name
-            }
-            Some(crate::catalog::ViewerItem::World(index)) => {
-                let worlds = local_worlds(&game_home);
-                if let Some((name, path)) = worlds.get(index) {
-                    image_key = Some(self.catalog.queue_local_preview(&path.join("icon.png"), true));
-                    name.clone()
-                } else {
-                    "World".to_owned()
-                }
-            }
-            Some(crate::catalog::ViewerItem::Server(index)) => {
-                let server = self.catalog.saved_servers.get(index).cloned();
-                if let Some(server) = server {
-                    if let Some(icon) = server.icon.as_deref() {
-                        image_key = Some(self.catalog.queue_bytes_preview(
-                            &format!("server-{index}"),
-                            icon,
-                            true,
-                        ));
-                    }
-                    server.name
-                } else {
-                    "Server".to_owned()
-                }
-            }
-            Some(crate::catalog::ViewerItem::Replay(index)) => {
-                if let Some(replay) = self.catalog.replays.get(index).cloned() {
-                    if let Some(path) = replay_thumbnail_path(&game_home, &replay) {
-                        image_key = Some(self.catalog.queue_local_preview(&path, true));
-                    }
-                    if replay.server.is_empty() { replay.file_name } else { replay.server }
-                } else {
-                    "Replay thumbnail".to_owned()
-                }
-            }
-            Some(crate::catalog::ViewerItem::Project(index)) => {
-                let project = self.catalog.detail_index
-                    .and_then(|detail| self.catalog.results.get(detail))
-                    .cloned();
-                if let Some(project) = project {
-                    let image = self.catalog.project_details(&project)
-                        .and_then(|result| result.as_ref().ok())
-                        .and_then(|details| details.gallery.get(index))
-                        .cloned();
-                    if let Some(image) = image {
-                        image_key = Some(self.catalog.queue_remote_preview(&self.home, &image.url, true));
-                        if !image.title.is_empty() { image.title } else { project.title }
-                    } else {
-                        project.title
-                    }
-                } else {
-                    "Project image".to_owned()
-                }
-            }
-            None => "Image".to_owned(),
-        };
-
-        ui.rounded(x, y, w, h, 12.0, theme::CARD());
-        ui.border(x, y, w, h, 12.0, theme::BORDER());
-        let back = [x + 12.0, y + 10.0, 84.0, 36.0];
-        ui.rounded(back[0], back[1], back[2], back[3], 18.0, theme::GLASS());
-        ui.border(back[0], back[1], back[2], back[3], 18.0, theme::GLASS_BORDER());
-        draw_centered_text(ui, Face::LauncherMedium, 13.0, back, theme::TEXT(), "← Back");
-        self.targets.push((back, Action::CloseViewer));
-        ui.text(
-            Face::LauncherMedium,
-            14.0,
-            x + 110.0,
-            y + 18.0,
-            theme::TEXT(),
-            &ui.fit_text(Face::LauncherMedium, 14.0, &title, w - 130.0),
-        );
-
-        let photo = [x + 14.0, y + 56.0, w - 28.0, h - 70.0];
-        ui.rounded(photo[0], photo[1], photo[2], photo[3], 14.0, theme::GLASS_INNER());
-        if let Some(key) = image_key.as_deref()
-            && let Some(image) = self.catalog.preview(key)
-        {
-            ui.draw_dynamic_rgba_fit(
-                0,
-                image.hash,
-                image.width,
-                image.height,
-                &image.rgba,
-                photo[0] + 8.0,
-                photo[1] + 8.0,
-                (photo[2] - 16.0).max(1.0),
-                (photo[3] - 16.0).max(1.0),
-                255,
-            );
-        } else {
-            let message = match image_key.as_deref() {
-                Some(key) if self.catalog.preview_loading(key) => "Loading image…",
-                Some(key) if self.catalog.preview_failed(key) => "Could not decode this image.",
-                Some(_) => "Preparing image preview…",
-                None => "No preview image is available for this item.",
-            };
-            draw_centered_text(
-                ui,
-                Face::LauncherRegular,
-                13.0,
-                [photo[0] + 12.0, photo[1] + photo[3] * 0.5 - 12.0, photo[2] - 24.0, 24.0],
-                theme::MUTED(),
-                message,
-            );
-        }
-        ui.border(photo[0], photo[1], photo[2], photo[3], 14.0, theme::GLASS_BORDER());
-    }
-
-    fn draw_server_detail(&mut self, ui: &mut Ui, area: [f32; 4], index: usize) {
-        let [x, y, w, h] = area;
-        let back = [x + 8.0, y + 8.0, 92.0, 36.0];
-        styled_button(ui, self.targets, back, "← Servers", Action::CloseServer, BtnStyle::Secondary, true);
-        let Some(server) = self.catalog.saved_servers.get(index).cloned() else {
-            ui.text(Face::LauncherRegular, 13.0, x + 12.0, y + 58.0, theme::MUTED(), "This server is no longer in the saved list.");
-            return;
-        };
-        let card = [x + 8.0, y + 54.0, (w - 16.0).max(80.0), (h - 62.0).max(100.0)];
-        ui.rounded(card[0], card[1], card[2], card[3], 14.0, theme::CARD());
-        ui.border(card[0], card[1], card[2], card[3], 14.0, theme::BORDER());
-        let icon = [card[0] + 14.0, card[1] + 14.0, (card[2] * 0.42).clamp(96.0, 220.0), (card[3] * 0.48).clamp(72.0, 150.0)];
-        ui.rounded(icon[0], icon[1], icon[2], icon[3], 10.0, theme::GLASS_INNER());
-        if let Some(bytes) = server.icon.as_deref() {
-            let key = self.catalog.queue_bytes_preview(&format!("server-{index}"), bytes, true);
-            if let Some(image) = self.catalog.preview(&key) {
-                ui.draw_dynamic_rgba_fit(0, image.hash, image.width, image.height, &image.rgba,
-                    icon[0] + 2.0, icon[1] + 2.0, icon[2] - 4.0, icon[3] - 4.0, 255);
-            } else {
-                draw_centered_text(ui, Face::LauncherRegular, 11.0, icon, theme::DIM(),
-                    if self.catalog.preview_failed(&key) { "No server icon" } else { "Loading icon…" });
-            }
-            self.targets.push((icon, Action::ViewServerImage(index)));
-        } else {
-            draw_tile_icon(ui, 1, icon[0] + icon[2] * 0.5, icon[1] + icon[3] * 0.5, theme::MUTED());
-            draw_centered_text(ui, Face::LauncherRegular, 10.5, [icon[0], icon[1] + icon[3] - 24.0, icon[2], 18.0], theme::DIM(), "No server icon saved");
-        }
-        let text_x = icon[0] + icon[2] + 16.0;
-        let text_w = (card[0] + card[2] - text_x - 14.0).max(60.0);
-        ui.text(Face::LauncherMedium, 20.0, text_x, card[1] + 20.0, theme::TEXT(),
-            &ui.fit_text(Face::LauncherMedium, 20.0, &server.name, text_w));
-        ui.text(Face::LauncherRegular, 14.0, text_x, card[1] + 54.0, theme::MUTED(),
-            &ui.fit_text(Face::LauncherRegular, 14.0, &server.ip, text_w));
-        ui.text(Face::LauncherRegular, 11.5, text_x, card[1] + 82.0, theme::DIM(), "Tap the server icon to preview it.");
-        styled_button(ui, self.targets,
-            [card[0] + 14.0, card[1] + card[3] - 52.0, 170.0_f32.min(card[2] - 28.0).max(100.0), 38.0],
-            "Connect", Action::ConnectServer(index), BtnStyle::Primary, true);
-        ui.text(Face::LauncherRegular, 11.5, card[0] + 14.0, card[1] + card[3] - 14.0, theme::DIM(), "Connection starts with the current profile.");
-    }
-
-    fn draw_replay_detail(&mut self, ui: &mut Ui, area: [f32; 4], index: usize) {
-        let [x, y, w, h] = area;
-        let back = [x + 8.0, y + 8.0, 92.0, 36.0];
-        styled_button(ui, self.targets, back, "← Replays", Action::CloseReplayDetail, BtnStyle::Secondary, true);
-        let Some(replay) = self.catalog.replays.get(index).cloned() else {
-            ui.text(Face::LauncherRegular, 13.0, x + 12.0, y + 58.0, theme::MUTED(), "This replay is no longer available.");
-            return;
-        };
-        let game_home = self.catalog.config.game_home(&self.home);
-        let thumb = replay_thumbnail_path(&game_home, &replay);
-        let card = [x + 8.0, y + 54.0, (w - 16.0).max(80.0), (h - 62.0).max(100.0)];
-        ui.rounded(card[0], card[1], card[2], card[3], 14.0, theme::CARD());
-        ui.border(card[0], card[1], card[2], card[3], 14.0, theme::BORDER());
-        let image = [card[0] + 14.0, card[1] + 14.0, card[2] - 28.0, (card[3] * 0.48).clamp(82.0, 210.0)];
-        ui.rounded(image[0], image[1], image[2], image[3], 10.0, theme::GLASS_INNER());
-        if let Some(path) = thumb.as_deref() {
-            let key = self.catalog.queue_local_preview(path, false);
-            if let Some(preview) = self.catalog.preview(&key) {
-                ui.draw_dynamic_rgba_fit(0, preview.hash, preview.width, preview.height, &preview.rgba,
-                    image[0] + 2.0, image[1] + 2.0, image[2] - 4.0, image[3] - 4.0, 255);
-            } else {
-                draw_centered_text(ui, Face::LauncherRegular, 12.0, image, theme::DIM(),
-                    if self.catalog.preview_failed(&key) { "Could not load replay thumbnail" } else { "Loading replay thumbnail…" });
-            }
-            self.targets.push((image, Action::ViewReplayImage(index)));
-        } else {
-            draw_centered_text(ui, Face::LauncherRegular, 12.0, image, theme::DIM(), "No matching screenshot thumbnail found");
-        }
-        let title = if replay.server.is_empty() { replay.file_name.clone() } else { replay.server.clone() };
-        ui.text(Face::LauncherMedium, 17.0, card[0] + 14.0, image[1] + image[3] + 14.0, theme::TEXT(),
-            &ui.fit_text(Face::LauncherMedium, 17.0, &title, card[2] - 28.0));
-        let description = format!("{} · {} · {:.1} MiB", horizon_client::replay::format_time(replay.duration_ms), replay.name, replay.size as f32 / (1024.0 * 1024.0));
-        ui.text(Face::LauncherRegular, 12.0, card[0] + 14.0, image[1] + image[3] + 40.0, theme::MUTED(),
-            &ui.fit_text(Face::LauncherRegular, 12.0, &description, card[2] - 28.0));
-        let button_y = card[1] + card[3] - 52.0;
-        let button_w = ((card[2] - 40.0) / 3.0).min(150.0).max(72.0);
-        styled_button(ui, self.targets, [card[0] + 14.0, button_y, button_w, 38.0], "Watch", Action::WatchReplay(index), BtnStyle::Primary, true);
-        styled_button(ui, self.targets, [card[0] + 22.0 + button_w, button_y, button_w, 38.0], "Export MP4", Action::ExportReplay(index), BtnStyle::Secondary, true);
-        styled_button(ui, self.targets, [card[0] + 30.0 + 2.0 * button_w, button_y, button_w.min(card[2] - 30.0 - 2.0 * button_w), 38.0], "Delete", Action::DeleteReplay(index), BtnStyle::Secondary, true);
+        // ---- Bottom-right: Help → the Volt Discord ----
+        let help = [ax + w - 96.0, ay + h - m - 40.0, 96.0, 40.0];
+        ui.rounded(help[0], help[1], help[2], help[3], 12.0, theme::GLASS());
+        ui.border(help[0], help[1], help[2], help[3], 12.0, theme::GLASS_BORDER());
+        draw_headset_icon(ui, help[0] + 22.0, help[1] + 20.0, theme::TEXT());
+        ui.text(Face::LauncherMedium, 12.5, help[0] + 38.0,
+            text_vcenter(help[1], 40.0, 12.5), theme::TEXT(), "Help");
+        self.targets.push((help, Action::Discord));
     }
 
     fn draw_home_tab(&mut self, ui: &mut Ui, area: [f32; 4], account_status: &str, installed: bool) {
         let [x, y, w, h] = area;
-        // Item details and image previews replace the current page body.
-        if self.catalog.viewer.is_some() {
-            self.draw_fullscreen_viewer(ui, area);
-            return;
-        }
-        if self.home_tab == HomeTab::Multiplayer
-            && let Some(index) = self.catalog.server_detail
-        {
-            self.draw_server_detail(ui, area, index);
-            return;
-        }
-        if self.home_tab == HomeTab::Replays
-            && let Some(index) = self.catalog.replay_detail
-        {
-            self.draw_replay_detail(ui, area, index);
-            return;
-        }
         match self.home_tab {
             HomeTab::Overview => {
                 // Separate compact cards rather than an empty full-height rectangle.
@@ -2562,69 +2081,58 @@ impl DrawCtx<'_> {
             }
             HomeTab::Worlds => {
                 ui.text(Face::LauncherMedium, 15.0, x + 8.0, y + 8.0, theme::TEXT(), "Worlds");
-                let game_home = self.catalog.config.game_home(self.home);
-                let worlds = local_worlds(&game_home);
+                let saves = self.catalog.config.game_home(self.home).join("saves");
+                let worlds = world_folders_in(&saves);
                 let summary = if worlds.is_empty() { "No local world folders found".to_owned() }
-                    else { format!("{} worlds · Tap a saved world icon to preview it", worlds.len()) };
+                    else { format!("{} local worlds \u{2022} Tap one to see its picture", worlds.len()) };
                 let summary = ui.fit_text(Face::LauncherRegular, 12.5, &summary, w - 16.0);
                 ui.text(Face::LauncherRegular, 12.5, x + 8.0, y + 35.0, theme::MUTED(), &summary);
-                if worlds.is_empty() {
-                    ui.text(Face::LauncherRegular, 12.5, x + 8.0, y + 58.0, theme::DIM(), "Create a world inside the game – it will appear here.");
-                } else {
-                    let cols = if w < 600.0 { 1 } else { 2 };
-                    let gap = 10.0;
-                    let card_w = (w - 16.0 - gap * (cols as f32 - 1.0)) / cols as f32;
-                    let card_h = 128.0;
-                    let top = y + 60.0;
-                    let bottom = y + h;
-                    let total_rows = worlds.len().div_ceil(cols);
-                    let content_h = total_rows as f32 * (card_h + gap);
-                    let max = (content_h - (bottom - top).max(0.0)).max(0.0);
-                    self.catalog.scroll = self.catalog.scroll.clamp(0.0, max);
-                    *self.list_view = Some([top, bottom, max]);
-                    let start = ui.batch_mut().vertices.len();
-                    for (i, (world, path)) in worlds.iter().enumerate() {
-                        let col = (i % cols) as f32;
-                        let row = (i / cols) as f32;
-                        let cx2 = x + 8.0 + col * (card_w + gap);
-                        let cy2 = top + row * (card_h + gap) - self.catalog.scroll;
-                        if cy2 + card_h < top || cy2 > bottom { continue; }
-                        let rect = [cx2, cy2, card_w, card_h];
-                        ui.rounded(rect[0], rect[1], rect[2], rect[3], 12.0, theme::CARD());
-                        ui.border(rect[0], rect[1], rect[2], rect[3], 12.0, theme::BORDER());
-                        let photo = [rect[0] + 4.0, rect[1] + 4.0, rect[2] - 8.0, 78.0];
-                        ui.rounded(photo[0], photo[1], photo[2], photo[3], 8.0, theme::GLASS_INNER());
-                        // The save's real picture: its icon.png, or its newest
-                        // world screenshot when no icon was ever saved.
-                        let picture = std::fs::symlink_metadata(path.join("icon.png"))
-                            .is_ok_and(|meta| meta.is_file() && !meta.file_type().is_symlink())
-                            .then(|| path.join("icon.png"))
-                            .or_else(|| world_picture(path));
-                        if let Some(picture) = picture {
-                            let key = self.catalog.queue_local_preview(&picture, true);
-                            if let Some(image) = self.catalog.preview(&key) {
-                                ui.draw_dynamic_rgba_fit(preview_slot(i), image.hash, image.width, image.height,
-                                    &image.rgba, photo[0] + 2.0, photo[1] + 2.0, photo[2] - 4.0, photo[3] - 4.0, 255);
-                            } else {
-                                let message = if self.catalog.preview_failed(&key) { "World picture unavailable" } else { "Loading world picture…" };
-                                draw_centered_text(ui, Face::LauncherRegular, 10.5, photo, theme::DIM(), message);
-                            }
-                        } else {
-                            draw_centered_text(ui, Face::LauncherRegular, 10.5, photo, theme::DIM(), "No world screenshot yet");
-                        }
-                        let label = ui.fit_text(Face::LauncherMedium, 13.0, world, rect[2] - 16.0);
-                        ui.text(Face::LauncherMedium, 13.0, rect[0] + 8.0, rect[1] + 90.0, theme::TEXT(), &label);
-                        ui.text(Face::LauncherRegular, 10.5, rect[0] + 8.0, rect[1] + 106.0, theme::MUTED(), "Tap the picture to open it full screen");
-                        self.targets.push((rect, Action::ViewWorld(i)));
-                        self.targets.push((photo, Action::ViewWorld(i)));
+                let top = y + 60.0;
+                let bottom = y + h;
+                let view_h = (bottom - top).max(0.0);
+                // A thumbnail grid: each world card carries its icon.png.
+                let cols = ((w / 190.0).floor() as usize).max(1);
+                let gap = 10.0;
+                let card_w = (w - 16.0 - (cols.saturating_sub(1) as f32) * gap) / cols as f32;
+                let thumb_h = (card_w * 9.0 / 16.0).min(130.0);
+                let card_h = thumb_h + 26.0;
+                let rows = worlds.len().div_ceil(cols);
+                let maximum = (rows as f32 * (card_h + gap) - gap - view_h).max(0.0);
+                self.catalog.scroll = self.catalog.scroll.clamp(0.0, maximum);
+                *self.list_view = Some([top, bottom, maximum]);
+                let start = ui.batch_mut().vertices.len();
+                for (i, world) in worlds.iter().enumerate() {
+                    let cx = x + 8.0 + (i % cols) as f32 * (card_w + gap);
+                    let cy = top + (i / cols) as f32 * (card_h + gap) - self.catalog.scroll;
+                    if cy + card_h < top || cy > bottom { continue; }
+                    let card = [cx, cy, card_w, card_h];
+                    ui.rounded(card[0], card[1], card[2], card[3], 10.0, theme::GLASS_INNER());
+                    let icon = saves.join(world).join("icon.png");
+                    draw_photo_thumb(
+                        ui,
+                        self.photos,
+                        4 + (i % 24),
+                        &crate::photo_cache::file_key(&icon),
+                        &crate::photo_cache::Source::File(icon),
+                        [cx + 3.0, cy + 3.0, card_w - 6.0, thumb_h - 3.0],
+                        0,
+                    );
+                    let label = ui.fit_text(Face::LauncherMedium, 12.0, world, card_w - 16.0);
+                    ui.text(Face::LauncherMedium, 12.0, cx + 8.0, cy + thumb_h + 4.0, theme::TEXT(), &label);
+                    if cy >= top - 4.0 && cy + card_h <= bottom + 4.0 {
+                        self.targets.push((card, Action::ViewWorld(i)));
                     }
-                    let bounds = [ui.to_batch(x), ui.to_batch(top), ui.to_batch(x + w), ui.to_batch(bottom)];
-                    ui.batch_mut().clip_since(start, bounds[0], bounds[1], bounds[2], bounds[3]);
                 }
+                if worlds.is_empty() && view_h > 24.0 {
+                    ui.text(Face::LauncherRegular, 12.5, x + 12.0, top + 6.0, theme::MUTED(),
+                        "Create a world in the game and it appears here.");
+                }
+                let bounds = [ui.to_batch(x), ui.to_batch(top), ui.to_batch(x + w), ui.to_batch(bottom)];
+                ui.batch_mut().clip_since(start, bounds[0], bounds[1], bounds[2], bounds[3]);
             }
             HomeTab::Multiplayer => {
-                ui.text(Face::LauncherMedium, 15.0, x + 8.0, y + 8.0, theme::TEXT(), "Servers");
-                ui.text(Face::LauncherRegular, 12.5, x + 8.0, y + 34.0, theme::MUTED(), "Tap a saved server for its details and Connect button.");
+                ui.text(Face::LauncherMedium, 15.0, x + 8.0, y + 8.0, theme::TEXT(), "Multiplayer");
+                ui.text(Face::LauncherRegular, 12.5, x + 8.0, y + 34.0, theme::MUTED(), "Select a saved server or enter an address");
                 let r = [x + 8.0, y + 56.0, (w - 104.0).max(80.0).min(380.0), 38.0];
                 ui.rounded(r[0], r[1], r[2], r[3], 10.0, theme::CARD_INNER());
                 let value = if self.catalog.config.server.is_empty() { "Server address (optional)" } else { &self.catalog.config.server };
@@ -2632,195 +2140,196 @@ impl DrawCtx<'_> {
                 ui.text(Face::LauncherRegular, 13.0, r[0] + 12.0, text_vcenter(r[1], r[3], 13.0), theme::TEXT(), &value);
                 self.targets.push((r, Action::Field("server")));
                 if w >= 200.0 {
-                    styled_button(ui, self.targets, [r[0] + r[2] + 8.0, r[1], 80.0, r[3]], "Save", Action::SaveServer, BtnStyle::Secondary, true);
+                    styled_button(ui, self.targets, [r[0] + r[2] + 8.0, r[1], 80.0, r[3]],
+                        "Save", Action::SaveServer, BtnStyle::Secondary, true);
                 }
-                let servers = self.catalog.saved_servers.clone();
+                let servers = &self.catalog.saved_servers;
                 let top = y + 104.0;
                 let bottom = y + h;
-                let cols = if w < 520.0 { 1 } else { 2 };
-                let gap = 10.0;
-                let card_w = (w - 16.0 - gap * (cols as f32 - 1.0)) / cols as f32;
-                let card_h = 84.0;
-                let total_rows = servers.len().div_ceil(cols.max(1));
-                let content_h = total_rows as f32 * (card_h + gap);
-                let max = (content_h - (bottom - top).max(0.0)).max(0.0);
+                let max = (servers.len() as f32 * 54.0 - (bottom - top).max(0.0)).max(0.0);
                 self.catalog.scroll = self.catalog.scroll.clamp(0.0, max);
                 *self.list_view = Some([top, bottom, max]);
                 if servers.is_empty() && bottom > top + 20.0 {
-                    ui.text(Face::LauncherRegular, 12.5, x + 8.0, top + 5.0, theme::MUTED(), "No saved servers – add one above.");
+                    ui.text(Face::LauncherRegular, 12.5, x + 8.0, top + 5.0, theme::MUTED(), "No saved servers in this instance.");
                 }
                 let start = ui.batch_mut().vertices.len();
                 for (i, server) in servers.iter().enumerate() {
-                    let col = (i % cols) as f32;
-                    let row = (i / cols) as f32;
-                    let sx = x + 8.0 + col * (card_w + gap);
-                    let sy = top + row * (card_h + gap) - self.catalog.scroll;
-                    if sy + card_h < top || sy > bottom { continue; }
-                    let rr = [sx, sy, card_w, card_h];
-                    ui.rounded(rr[0], rr[1], rr[2], rr[3], 12.0, theme::GLASS_INNER());
-                    let icon = [rr[0] + 5.0, rr[1] + 6.0, 42.0, 42.0];
+                    let row_y = top + i as f32 * 54.0 - self.catalog.scroll;
+                    let row = [x + 8.0, row_y, w - 16.0, 48.0];
+                    self.list_targets.push((row, Action::ConnectServer(i)));
+                    if row_y < top || row_y + 48.0 > bottom { continue; }
+                    ui.rounded(row[0], row[1], row[2], row[3], 12.0, theme::GLASS_INNER());
+                    // The server's favicon from servers.dat, decoded off-thread.
+                    let icon = [row[0] + 6.0, row[1] + 6.0, 36.0, 36.0];
                     ui.rounded(icon[0], icon[1], icon[2], icon[3], 8.0, theme::HERO_BG());
-                    if let Some(bytes) = server.icon.as_deref() {
-                        let key = self.catalog.queue_bytes_preview(&format!("server-{i}"), bytes, true);
-                        if let Some(image) = self.catalog.preview(&key) {
-                            ui.draw_dynamic_rgba_fit(preview_slot(i), image.hash, image.width, image.height,
-                                &image.rgba, icon[0] + 1.0, icon[1] + 1.0, icon[2] - 2.0, icon[3] - 2.0, 255);
-                        } else if !self.catalog.preview_failed(&key) {
-                            draw_centered_text(ui, Face::LauncherRegular, 8.5, icon, theme::DIM(), "Loading");
-                        } else {
-                            draw_tile_icon(ui, 1, icon[0] + icon[2] * 0.5, icon[1] + icon[3] * 0.5, theme::MUTED());
+                    let mut has_icon = false;
+                    if let Some(bytes) = &server.icon {
+                        let key = format!("srv:{:x}", crate::skin_preview::fnv1a(bytes));
+                        if let Some(photo) = self.photos.get(
+                            &key,
+                            &crate::photo_cache::Source::Bytes(bytes.clone()),
+                            crate::photo_cache::Fit::Thumb,
+                        ) {
+                            let (cw, ch) = crate::photo_cache::Fit::Thumb.canvas();
+                            // The favicon is square: draw the letterboxed
+                            // 16:9 canvas wider than the tile, centred, so
+                            // the picture itself lands square in the tile.
+                            let dw = icon[3] * cw as f32 / ch as f32;
+                            has_icon = ui.draw_dynamic_rgba(
+                                4 + (i % 24), photo.hash, cw, ch, &photo.rgba,
+                                icon[0] + (icon[2] - dw) * 0.5, icon[1], dw, icon[3], 255,
+                            );
                         }
-                    } else {
-                        draw_tile_icon(ui, 1, icon[0] + icon[2] * 0.5, icon[1] + icon[3] * 0.5, theme::MUTED());
                     }
-                    let title = ui.fit_text(Face::LauncherMedium, 13.0, &server.name, rr[2] - 70.0);
-                    let address = ui.fit_text(Face::LauncherRegular, 11.0, &server.ip, rr[2] - 70.0);
-                    ui.text(Face::LauncherMedium, 13.0, rr[0] + 56.0, rr[1] + 8.0, theme::TEXT(), &title);
-                    ui.text(Face::LauncherRegular, 11.0, rr[0] + 56.0, rr[1] + 28.0, theme::MUTED(), &address);
-                    ui.text(Face::LauncherRegular, 10.0, rr[0] + 56.0, rr[1] + 50.0, theme::DIM(), "Tap for details · Connect");
-                    self.targets.push((rr, Action::ViewServer(i)));
+                    if !has_icon {
+                        draw_tile_icon(ui, 1, icon[0] + 18.0, icon[1] + 18.0,
+                            horizon_client::ui_theme::color::hex(0xc9cfdb, 90));
+                    }
+                    let tx0 = row[0] + 52.0;
+                    let title = ui.fit_text(Face::LauncherMedium, 13.0, &server.name, row[2] - 64.0);
+                    let address = ui.fit_text(Face::LauncherRegular, 11.5, &server.ip, row[2] - 64.0);
+                    ui.text(Face::LauncherMedium, 13.0, tx0, row[1] + 4.0, theme::TEXT(), &title);
+                    ui.text(Face::LauncherRegular, 11.5, tx0, row[1] + 25.0, theme::MUTED(), &address);
+                    self.targets.push((row, Action::ConnectServer(i)));
                 }
-                let bounds = [ui.to_batch(x), ui.to_batch(top), ui.to_batch(x + w), ui.to_batch(bottom)];
+                let bounds = [ui.to_batch(x), ui.to_batch(top), ui.to_batch(x+w), ui.to_batch(bottom)];
                 ui.batch_mut().clip_since(start, bounds[0], bounds[1], bounds[2], bounds[3]);
             }
             HomeTab::Screenshots => {
-                ui.text(Face::LauncherMedium, 15.0, x + 8.0, y + 8.0, theme::TEXT(), "Screenshots");
-                styled_button(ui, self.targets, [x + w - 118.0, y + 4.0, 110.0, 30.0], "Open folder", Action::OpenCaptures, BtnStyle::CrimsonOutline, true);
+                ui.text(Face::LauncherMedium, 15.0, x + 8.0, y + 8.0, theme::TEXT(), "Captures");
+                styled_button(
+                    ui,
+                    self.targets,
+                    [x + w - 118.0, y + 4.0, 110.0, 30.0],
+                    "Open folder",
+                    Action::OpenCaptures,
+                    BtnStyle::CrimsonOutline,
+                    true,
+                );
                 let shots = self.catalog.screenshots.clone();
                 let clips = self.catalog.recordings.clone();
-                let game_home = self.catalog.config.game_home(&self.home);
                 let summary = if clips.is_empty() && shots.is_empty() {
-                    "No captures yet. Screenshots appear as photos here.".to_owned()
+                    "No captures yet. Screenshots and Volt Recorder clips land here.".to_owned()
                 } else {
-                    format!("{} recording(s) · {} screenshot(s) · Tap photo → fullscreen, Back returns", clips.len(), shots.len())
+                    format!("{} recording(s) \u{2022} {} screenshot(s) \u{2022} Tap a picture to see it full screen", clips.len(), shots.len())
                 };
                 let summary = ui.fit_text(Face::LauncherRegular, 12.5, &summary, w - 16.0);
                 ui.text(Face::LauncherRegular, 12.5, x + 8.0, y + 34.0, theme::MUTED(), &summary);
                 let top = y + 58.0;
                 let bottom = y + h;
-                let cols = if w < 560.0 { 2 } else { 3 };
+                let clip_h = 40.0;
+                // Recorder clips keep their rows; the screenshots below are a
+                // thumbnail grid of the actual pictures.
+                let cols = ((w / 190.0).floor() as usize).max(1);
                 let gap = 10.0;
-                let card_w = (w - 16.0 - gap*(cols as f32 -1.0))/cols as f32;
-                let card_h = 104.0;
-                let rec_h = if clips.is_empty() { 0.0 } else { clips.len() as f32 * 40.0 + 8.0 };
-                let grid_top = top + rec_h;
-                let total_rows = shots.len().div_ceil(cols.max(1));
-                let content_h = rec_h + total_rows as f32 * (card_h+gap);
-                let max = (content_h - (bottom - grid_top + rec_h).max(0.0)).max(0.0);
-                self.catalog.scroll = self.catalog.scroll.clamp(0.0, max);
-                *self.list_view = Some([top, bottom, max]);
+                let card_w = (w - 16.0 - (cols.saturating_sub(1) as f32) * gap) / cols as f32;
+                let thumb_h = (card_w * 9.0 / 16.0).min(130.0);
+                let rows = shots.len().div_ceil(cols);
+                let grid_h = (rows as f32 * (thumb_h + gap)).max(0.0);
+                let total = clips.len() as f32 * clip_h + grid_h;
+                let maximum = (total - (bottom - top).max(0.0)).max(0.0);
+                self.catalog.scroll = self.catalog.scroll.clamp(0.0, maximum);
+                *self.list_view = Some([top, bottom, maximum]);
                 let start = ui.batch_mut().vertices.len();
                 for (i, (name, size)) in clips.iter().enumerate() {
-                    let row_y = top + i as f32 * 40.0 - self.catalog.scroll;
-                    if row_y + 40.0 < top || row_y > bottom { continue; }
+                    let row_y = top + i as f32 * clip_h - self.catalog.scroll;
+                    if row_y + clip_h < top || row_y > bottom { continue; }
                     let row = [x + 8.0, row_y, w - 16.0, 34.0];
                     ui.rounded(row[0], row[1], row[2], row[3], 10.0, theme::GLASS_INNER());
                     let label = ui.fit_text(Face::LauncherMedium, 12.5, name, row[2] - 150.0);
                     ui.text(Face::LauncherMedium, 12.5, row[0] + 10.0, row[1] + 3.0, theme::TEXT(), &label);
                     let mib = *size as f32 / (1024.0 * 1024.0);
-                    ui.text(Face::LauncherRegular, 11.0, row[0] + 10.0, row[1] + 18.0, theme::MUTED(), &format!("Volt Recorder · {mib:.1} MiB"));
-                    let del = [row[0]+row[2]-50.0, row[1]+3.0, 42.0, 28.0];
+                    let sub = format!("Volt Recorder \u{2022} {mib:.1} MiB");
+                    ui.text(Face::LauncherRegular, 11.0, row[0] + 10.0, row[1] + 18.0, theme::MUTED(), &sub);
+                    let del = [row[0] + row[2] - 50.0, row[1] + 3.0, 42.0, 28.0];
                     styled_button(ui, self.targets, del, "Del", Action::DeleteRecording(i), BtnStyle::Secondary, true);
                 }
+                let shots_top = top + clips.len() as f32 * clip_h;
+                let folder = self.catalog.config.game_home(self.home).join("screenshots");
                 for (i, shot) in shots.iter().enumerate() {
-                    let col = (i % cols) as f32;
-                    let row = (i / cols) as f32;
-                    let sx = x + 8.0 + col * (card_w + gap);
-                    let sy = grid_top + row * (card_h + gap) - self.catalog.scroll;
-                    if sy + card_h < top || sy > bottom { continue; }
-                    let rect = [sx, sy, card_w, card_h];
-                    ui.rounded(rect[0], rect[1], rect[2], rect[3], 10.0, theme::CARD());
-                    ui.border(rect[0], rect[1], rect[2], rect[3], 10.0, theme::BORDER());
-                    let photo = [rect[0] + 4.0, rect[1] + 4.0, rect[2] - 8.0, 70.0];
-                    ui.rounded(photo[0], photo[1], photo[2], photo[3], 8.0, theme::GLASS_INNER());
-                    let key = self.catalog.queue_local_preview(&game_home.join("screenshots").join(shot), false);
-                    if let Some(image) = self.catalog.preview(&key) {
-                        ui.draw_dynamic_rgba_fit(preview_slot(i), image.hash, image.width, image.height,
-                            &image.rgba, photo[0] + 2.0, photo[1] + 2.0, photo[2] - 4.0, photo[3] - 4.0, 255);
-                    } else {
-                        let message = if self.catalog.preview_failed(&key) { "Could not load screenshot" } else { "Loading screenshot…" };
-                        draw_centered_text(ui, Face::LauncherRegular, 10.5, photo, theme::DIM(), message);
+                    let cx = x + 8.0 + (i % cols) as f32 * (card_w + gap);
+                    let cy = shots_top + (i / cols) as f32 * (thumb_h + gap) - self.catalog.scroll;
+                    if cy + thumb_h < top || cy > bottom { continue; }
+                    let path = folder.join(shot);
+                    let rect = [cx, cy, card_w, thumb_h];
+                    draw_photo_thumb(
+                        ui,
+                        self.photos,
+                        4 + (i % 24),
+                        &crate::photo_cache::file_key(&path),
+                        &crate::photo_cache::Source::File(path),
+                        rect,
+                        2,
+                    );
+                    if cy >= top - 4.0 && cy + thumb_h <= bottom + 4.0 {
+                        self.targets.push((rect, Action::ViewScreenshot(i)));
                     }
-                    let label = ui.fit_text(Face::LauncherRegular, 10.5, shot, rect[2] - 10.0);
-                    ui.text(Face::LauncherRegular, 10.5, rect[0] + 5.0, rect[1] + 80.0, theme::MUTED(), &label);
-                    self.targets.push((rect, Action::ViewScreenshot(i)));
-                    self.targets.push((photo, Action::ViewScreenshot(i)));
                 }
                 let bounds = [ui.to_batch(x), ui.to_batch(top), ui.to_batch(x+w), ui.to_batch(bottom)];
-                ui.batch_mut().clip_since(start,bounds[0],bounds[1],bounds[2],bounds[3]);
+                ui.batch_mut().clip_since(start, bounds[0], bounds[1], bounds[2], bounds[3]);
             }
             HomeTab::Replays => {
-                ui.text(Face::LauncherMedium, 15.0, x + 8.0, y + 8.0, theme::TEXT(), "Replays");
-                let replays = self.catalog.replays.clone();
+                ui.text(Face::LauncherMedium, 15.0, x + 8.0, y + 8.0, theme::TEXT(), "Volt Replays");
+                let replays = &self.catalog.replays;
                 let summary = if replays.is_empty() {
-                    "No replays yet. Matching screenshots can be used as thumbnails.".to_owned()
+                    "No replays yet. Turn on Replay Recording in Volt Settings > Volt QoL, play, and your sessions appear here.".to_owned()
                 } else {
-                    format!("{} replays · Open one for details, playback, or export", replays.len())
+                    format!("{} recorded sessions \u{2022} Tap one to watch it", replays.len())
                 };
                 let summary = ui.fit_text(Face::LauncherRegular, 12.5, &summary, w - 16.0);
                 ui.text(Face::LauncherRegular, 12.5, x + 8.0, y + 34.0, theme::MUTED(), &summary);
                 let top = y + 58.0;
                 let bottom = y + h;
-                let cols = if w < 560.0 { 1 } else { 2 };
-                let gap = 10.0;
-                let card_w = (w - 16.0 - gap*(cols as f32 -1.0))/cols as f32;
-                let card_h = 140.0;
-                let total_rows = replays.len().div_ceil(cols.max(1));
-                let content_h = total_rows as f32 * (card_h+gap);
-                let max = (content_h - (bottom-top).max(0.0)).max(0.0);
+                let max = (replays.len() as f32 * 54.0 - (bottom - top).max(0.0)).max(0.0);
                 self.catalog.scroll = self.catalog.scroll.clamp(0.0, max);
                 *self.list_view = Some([top, bottom, max]);
-                let game_home = self.catalog.config.game_home(&self.home);
+                let replay_dir = self.catalog.config.game_home(self.home).join("replays");
                 let start = ui.batch_mut().vertices.len();
                 for (i, replay) in replays.iter().enumerate() {
-                    let col = (i % cols) as f32;
-                    let row = (i / cols) as f32;
-                    let sx = x + 8.0 + col * (card_w + gap);
-                    let sy = top + row * (card_h + gap) - self.catalog.scroll;
-                    if sy + card_h < top || sy > bottom { continue; }
-                    let rr = [sx, sy, card_w, card_h];
-                    ui.rounded(rr[0], rr[1], rr[2], rr[3], 12.0, theme::GLASS_INNER());
-                    let photo_area = [rr[0] + 6.0, rr[1] + 6.0, rr[2] - 12.0, 60.0];
-                    ui.rounded(photo_area[0], photo_area[1], photo_area[2], photo_area[3], 8.0, theme::HERO_BG());
-                    if let Some(path) = replay_thumbnail_path(&game_home, replay) {
-                        let key = self.catalog.queue_local_preview(&path, false);
-                        if let Some(image) = self.catalog.preview(&key) {
-                            ui.draw_dynamic_rgba_fit(preview_slot(i), image.hash, image.width, image.height,
-                                &image.rgba, photo_area[0] + 2.0, photo_area[1] + 2.0,
-                                photo_area[2] - 4.0, photo_area[3] - 4.0, 255);
-                        } else {
-                            let message = if self.catalog.preview_failed(&key) { "Could not load replay thumbnail" } else { "Loading thumbnail…" };
-                            draw_centered_text(ui, Face::LauncherRegular, 10.5, photo_area, theme::DIM(), message);
-                        }
+                    let row_y = top + i as f32 * 54.0 - self.catalog.scroll;
+                    let row = [x + 8.0, row_y, w - 16.0, 48.0];
+                    if row_y < top || row_y + 48.0 > bottom { continue; }
+                    ui.rounded(row[0], row[1], row[2], row[3], 12.0, theme::GLASS_INNER());
+                    // The session's cover picture, when one was saved beside it.
+                    let cover = replay_cover_path(&replay_dir.join(&replay.file_name));
+                    let tile = [row[0] + 5.0, row_y + 5.0, 68.0, 38.0];
+                    if cover.is_file() {
+                        draw_photo_thumb(
+                            ui,
+                            self.photos,
+                            4 + (i % 24),
+                            &crate::photo_cache::file_key(&cover),
+                            &crate::photo_cache::Source::File(cover),
+                            tile,
+                            5,
+                        );
+                        self.targets.push((tile, Action::ViewReplayCover(i)));
                     } else {
-                        draw_centered_text(ui, Face::LauncherRegular, 10.5, photo_area, theme::DIM(), "No screenshot thumbnail available");
+                        ui.rounded(tile[0], tile[1], tile[2], tile[3], 8.0, theme::HERO_BG());
+                        draw_tile_icon(ui, 5, tile[0] + tile[2] * 0.5, tile[1] + tile[3] * 0.5,
+                            horizon_client::ui_theme::color::hex(0xc9cfdb, 90));
                     }
-                    let title = if replay.server.is_empty() { replay.file_name.clone() } else { replay.server.clone() };
-                    let title = ui.fit_text(Face::LauncherMedium, 12.5, &title, rr[2] - 16.0);
-                    ui.text(Face::LauncherMedium, 12.5, rr[0] + 8.0, rr[1] + 72.0, theme::TEXT(), &title);
+                    let title = if replay.server.is_empty() { &replay.file_name } else { &replay.server };
+                    let title = ui.fit_text(Face::LauncherMedium, 13.0, title, row[2] - 280.0);
+                    ui.text(Face::LauncherMedium, 13.0, row[0] + 82.0, row[1] + 4.0, theme::TEXT(), &title);
                     let mib = replay.size as f32 / (1024.0 * 1024.0);
-                    let sub = format!("{} · {} · {mib:.1} MiB", horizon_client::replay::format_time(replay.duration_ms), replay.name);
-                    let sub = ui.fit_text(Face::LauncherRegular, 10.5, &sub, rr[2] - 16.0);
-                    ui.text(Face::LauncherRegular, 10.5, rr[0] + 8.0, rr[1] + 89.0, theme::MUTED(), &sub);
-                    let button_gap = 6.0;
-                    let button_w = ((rr[2] - 16.0 - 2.0 * button_gap) / 3.0).clamp(42.0, 80.0);
-                    let button_x = rr[0] + (rr[2] - (3.0 * button_w + 2.0 * button_gap)) * 0.5;
-                    let button_y = rr[1] + rr[3] - 34.0;
-                    styled_button(ui, self.targets, [button_x, button_y, button_w, 28.0], "Watch", Action::WatchReplay(i), BtnStyle::Primary, true);
-                    styled_button(ui, self.targets, [button_x + button_w + button_gap, button_y, button_w, 28.0], "MP4", Action::ExportReplay(i), BtnStyle::Secondary, true);
-                    styled_button(ui, self.targets, [button_x + 2.0 * (button_w + button_gap), button_y, button_w, 28.0], "Del", Action::DeleteReplay(i), BtnStyle::Secondary, true);
-                    self.targets.push((photo_area, Action::ViewReplay(i)));
+                    let sub = format!(
+                        "{} \u{2022} {} \u{2022} {:.1} MiB",
+                        horizon_client::replay::format_time(replay.duration_ms),
+                        replay.name,
+                        mib,
+                    );
+                    let sub = ui.fit_text(Face::LauncherRegular, 11.5, &sub, row[2] - 200.0);
+                    ui.text(Face::LauncherRegular, 11.5, row[0] + 12.0, row[1] + 25.0, theme::MUTED(), &sub);
+                    let watch = [row[0] + row[2] - 184.0, row[1] + 8.0, 70.0, 32.0];
+                    styled_button(ui, self.targets, watch, "Watch", Action::WatchReplay(i), BtnStyle::Primary, true);
+                    let export = [row[0] + row[2] - 106.0, row[1] + 8.0, 48.0, 32.0];
+                    styled_button(ui, self.targets, export, "MP4", Action::ExportReplay(i), BtnStyle::Secondary, true);
+                    let del = [row[0] + row[2] - 50.0, row[1] + 8.0, 42.0, 32.0];
+                    styled_button(ui, self.targets, del, "Del", Action::DeleteReplay(i), BtnStyle::Secondary, true);
                 }
-                let bounds = [ui.to_batch(x), ui.to_batch(top), ui.to_batch(x+w), ui.to_batch(bottom)];
-                ui.batch_mut().clip_since(start,bounds[0],bounds[1],bounds[2],bounds[3]);
-            }
-            HomeTab::VoltBoost => {
-                // The dashboard's Boost card, inline, so the destination rail
-                // stays usable while it is open.
-                let panel = [x + 8.0, y + 8.0, (w - 16.0).max(0.0), (h - 16.0).max(0.0)];
-                let (targets, list_targets) = (&mut self.targets, &mut self.list_targets);
-                *self.list_view =
-                    draw_volt_boost_panel(ui, targets, list_targets, &mut self.catalog, panel, false);
+                let bounds = [ui.to_batch(x), ui.to_batch(top), ui.to_batch(x + w), ui.to_batch(bottom)];
+                ui.batch_mut().clip_since(start, bounds[0], bounds[1], bounds[2], bounds[3]);
             }
             HomeTab::Console => {
                 ui.text(Face::LauncherMedium, 15.0, x + 8.0, y + 8.0, theme::TEXT(), "Launcher diagnostics");
@@ -2834,6 +2343,158 @@ impl DrawCtx<'_> {
         }
     }
 
+    /// A catalog entry's own page: About, its screenshots and Download.
+    fn draw_catalog_detail(&mut self, ui: &mut Ui, area: [f32; 4], compact: bool) {
+        use crate::photo_cache::Source;
+        let [cx, cy, cw, ch] = area;
+        let Some(view) = self.catalog.detail.as_ref() else {
+            return;
+        };
+        let project = view.project.clone();
+        let index = view.index;
+        let error = view.error.clone();
+        let details = view.details.clone();
+
+        // ---- Fixed header: Back, the title line, Download ----
+        let back = [cx, cy + 2.0, 86.0, 36.0];
+        ui.rounded(back[0], back[1], back[2], back[3], 18.0, theme::GLASS());
+        ui.border(back[0], back[1], back[2], back[3], 18.0, theme::GLASS_BORDER());
+        draw_centered_text(ui, Face::LauncherMedium, 13.0, back, theme::TEXT(), "< Back");
+        self.targets.push((back, Action::CloseDetail));
+
+        let icon_sz = 40.0;
+        let icon_x = cx + 98.0;
+        ui.rounded(icon_x, cy, icon_sz, icon_sz, 10.0, theme::HERO_BG());
+        if let Some(ic) = self.catalog.project_icon(&project) {
+            let (hash, rgba) = (ic.hash, ic.rgba.clone());
+            ui.draw_dynamic_rgba(3, hash, 64, 64, &rgba, icon_x + 1.0, cy + 1.0,
+                icon_sz - 2.0, icon_sz - 2.0, 255);
+        }
+        let text_x = icon_x + icon_sz + 12.0;
+        let btn_w = if compact { 108.0 } else { 132.0 };
+        let title = ui.fit_text(Face::LauncherMedium, 16.5, &project.title,
+            (cx + cw - btn_w - 14.0 - text_x).max(60.0));
+        ui.text(Face::LauncherMedium, 16.5, text_x, cy + 1.0, theme::TEXT(), &title);
+        let line2 = format!(
+            "{} \u{2022} {} downloads \u{2022} {}",
+            if project.author.is_empty() { "Unknown author" } else { &project.author },
+            project.downloads,
+            if project.license.is_empty() { "No license listed" } else { &project.license },
+        );
+        let line2 = ui.fit_text(Face::LauncherRegular, 11.5, &line2,
+            (cx + cw - btn_w - 14.0 - text_x).max(60.0));
+        ui.text(Face::LauncherRegular, 11.5, text_x, cy + 24.0, theme::MUTED(), &line2);
+
+        // Download: the same action as the card's Install button, valid
+        // only while the entry still sits where it was opened from.
+        let same = self.catalog.results.get(index).is_some_and(|p| p.id == project.id);
+        let btn = [cx + cw - btn_w, cy + 2.0, btn_w, 36.0];
+        if let Some(state) = self.catalog.download_label(&project) {
+            ui.rounded(btn[0], btn[1], btn[2], btn[3], 9.0, theme::CARD_INNER());
+            ui.border(btn[0], btn[1], btn[2], btn[3], 9.0, theme::BORDER());
+            let state = ui.fit_text(Face::LauncherRegular, 12.0, &state, btn_w - 12.0);
+            draw_centered_text(ui, Face::LauncherRegular, 12.0, btn, theme::MUTED(), &state);
+        } else if same {
+            styled_button(ui, self.targets, btn, self.catalog.install_button(&project),
+                Action::Install(index), BtnStyle::Primary, true);
+        }
+
+        // ---- Scrolling content: screenshots, then About ----
+        let top = cy + 52.0;
+        let bottom = cy + ch - 34.0;
+        let gallery: Vec<crate::browser::details::Image> =
+            details.as_ref().map(|d| d.gallery.clone()).unwrap_or_default();
+        let shot_cols = if compact { 2usize } else { 3usize };
+        let gap = 10.0;
+        let shot_w = (cw - (shot_cols.saturating_sub(1) as f32) * gap) / shot_cols as f32;
+        let shot_h = (shot_w * 9.0 / 16.0).min(150.0);
+        let shot_rows = gallery.len().div_ceil(shot_cols);
+        let shots_h = if gallery.is_empty() { 0.0 }
+            else { shot_rows as f32 * (shot_h + gap) + 26.0 };
+        let body_raw = details
+            .as_ref()
+            .map(|d| d.body.clone())
+            .filter(|b| !b.trim().is_empty())
+            .unwrap_or_else(|| project.summary.clone());
+        let mut body_lines: Vec<String> = Vec::new();
+        for raw in body_raw.lines().take(400) {
+            let line = raw
+                .trim_start_matches('#')
+                .trim()
+                .trim_start_matches("- ")
+                .replace("**", "")
+                .replace('`', "");
+            if line.is_empty() && body_lines.last().is_none_or(|l| l.is_empty()) {
+                continue;
+            }
+            if raw.trim_start().starts_with('-') {
+                body_lines.extend(wrap_lines(ui, Face::LauncherRegular, 12.5,
+                    &format!("\u{2022} {line}"), cw - 8.0, 6));
+            } else {
+                body_lines.extend(wrap_lines(ui, Face::LauncherRegular, 12.5, &line, cw - 8.0, 8));
+            }
+            if body_lines.len() > 400 {
+                break;
+            }
+        }
+        let about_h = 26.0 + body_lines.len() as f32 * 17.0;
+        let content_h = shots_h + about_h;
+        let maximum = (content_h - (bottom - top)).max(0.0);
+        self.catalog.scroll = self.catalog.scroll.clamp(0.0, maximum);
+        *self.list_view = Some([top, bottom, maximum]);
+        let start = ui.batch_mut().vertices.len();
+        let mut yy = top - self.catalog.scroll;
+        if !gallery.is_empty() {
+            ui.text(Face::LauncherMedium, 14.0, cx, yy, theme::TEXT(), "Screenshots");
+            yy += 26.0;
+            for (i, image) in gallery.iter().enumerate() {
+                let sx = cx + (i % shot_cols) as f32 * (shot_w + gap);
+                let sy = yy + (i / shot_cols) as f32 * (shot_h + gap);
+                if sy + shot_h >= top && sy <= bottom {
+                    let rect = [sx, sy, shot_w, shot_h];
+                    draw_photo_thumb(
+                        ui,
+                        self.photos,
+                        4 + (i % 24),
+                        &format!("thumb-https:{}", image.url),
+                        &Source::Https(image.url.clone()),
+                        rect,
+                        2,
+                    );
+                    if sy >= top - 4.0 && sy + shot_h <= bottom + 4.0 {
+                        self.targets.push((rect, Action::ViewGalleryImage(i)));
+                    }
+                }
+            }
+            yy += shot_rows as f32 * (shot_h + gap);
+        }
+        ui.text(Face::LauncherMedium, 14.0, cx, yy, theme::TEXT(), "About");
+        yy += 26.0;
+        if details.is_none() && error.is_none() && body_lines.is_empty() {
+            ui.text(Face::LauncherRegular, 12.5, cx, yy, theme::MUTED(), "Loading...");
+        }
+        for line in &body_lines {
+            if yy + 17.0 >= top && yy <= bottom {
+                ui.text(Face::LauncherRegular, 12.5, cx, yy, theme::MUTED(), line);
+            }
+            yy += 17.0;
+        }
+        let bounds = [ui.to_batch(cx), ui.to_batch(top), ui.to_batch(cx + cw), ui.to_batch(bottom)];
+        ui.batch_mut().clip_since(start, bounds[0], bounds[1], bounds[2], bounds[3]);
+
+        // ---- Footer: the page link and any fetch error ----
+        let fy = cy + ch - 30.0;
+        if project.page.starts_with("https://") {
+            styled_button(ui, self.targets, [cx, fy, 118.0, 28.0], "Open page",
+                Action::OpenProject(index), BtnStyle::Secondary, true);
+        }
+        if let Some(error) = &error {
+            let error = ui.fit_text(Face::LauncherRegular, 11.5, error, cw - 130.0);
+            ui.text(Face::LauncherRegular, 11.5, cx + 128.0,
+                text_vcenter(fy, 28.0, 11.5), theme::CRIMSON_BRIGHT(), &error);
+        }
+    }
+
     fn draw_catalog_page(
         &mut self,
         ui: &mut Ui,
@@ -2842,11 +2503,11 @@ impl DrawCtx<'_> {
         page: Page,
         account_status: &str,
     ) {
-        let [cx, cy, cw, ch] = area;
-        if self.catalog.viewer.is_some() {
-            self.draw_fullscreen_viewer(ui, area);
+        if self.catalog.detail.is_some() {
+            self.draw_catalog_detail(ui, area, compact);
             return;
         }
+        let [cx, cy, cw, ch] = area;
         let kind = match page {
             Page::Mods => horizon_client::content_files::Kind::Mods,
             Page::Shaders => horizon_client::content_files::Kind::Shaders,
@@ -2858,7 +2519,6 @@ impl DrawCtx<'_> {
             _ => "Resource Packs",
         };
         use crate::shader_catalog::Origin;
-        use horizon_client::ui_theme::color::hex;
         let hint = match page {
             Page::Mods if self.catalog.config.mod_source != Origin::Horizon => {
                 "Java mods (Modrinth / CurseForge) are browse-only; native .hmod mods run on Android"
@@ -2870,211 +2530,93 @@ impl DrawCtx<'_> {
             Page::Shaders => "Horizon catalog / native .hshader & experimental ZIP support",
             _ => "Modrinth & CurseForge verified resource packs / enable in Installed",
         };
-        // Detail page: About/Screenshots/Download with Back
-        if let Some(idx) = self.catalog.detail_index {
-            if let Some(proj) = self.catalog.results.get(idx).cloned() {
-                self.catalog.request_project_details(&proj);
-                let project_details = self.catalog.project_details(&proj).cloned();
-                let back = [cx, cy, 88.0, 34.0];
-                ui.rounded(back[0], back[1], back[2], back[3], 17.0, theme::GLASS());
-                ui.border(back[0], back[1], back[2], back[3], 17.0, theme::GLASS_BORDER());
-                draw_centered_text(ui, Face::LauncherMedium, 12.0, back, theme::TEXT(), "← Back");
-                self.targets.push((back, Action::CloseDetail));
-                // Home, so a detail page is never a dead end once the shell's
-                // navigation is off screen.
-                let home_btn = [back[0] + back[2] + 8.0, back[1], 84.0, back[3]];
-                if home_btn[0] + home_btn[2] < cx + cw - 90.0 {
-                    ui.rounded(home_btn[0], home_btn[1], home_btn[2], home_btn[3], 17.0, theme::GLASS());
-                    ui.border(home_btn[0], home_btn[1], home_btn[2], home_btn[3], 17.0, theme::GLASS_BORDER());
-                    draw_centered_text(ui, Face::LauncherMedium, 12.0, home_btn, theme::TEXT(), "Home");
-                    self.targets.push((home_btn, Action::Page(Page::Play)));
-                }
-                let head_x = home_btn[0] + home_btn[2] + 12.0;
-                let head_w = (cx + cw - head_x).max(80.0);
-                ui.text(Face::LauncherMedium, 22.0, head_x, cy+4.0, theme::TEXT(), &ui.fit_text(Face::LauncherMedium, 22.0, &proj.title, head_w));
-                ui.text(Face::LauncherRegular, 12.5, head_x, cy+32.0, theme::MUTED(), &ui.fit_text(Face::LauncherRegular, 12.5, &proj.summary, head_w));
-                // Tabs: About / Screenshots / Download
-                let tab_y = cy + 52.0;
-                let tab_w = ((cw - 16.0) / 3.0).clamp(72.0, 108.0);
-                for (i, label) in ["About","Screenshots","Download"].iter().enumerate() {
-                    let r = [cx + i as f32*(tab_w+8.0), tab_y, tab_w, 32.0];
-                    let active = self.catalog.detail_tab == i as u8;
-                    if active {
-                        ui.rounded(r[0], r[1], r[2], r[3], 16.0, theme::HOVER());
-                        ui.border(r[0], r[1], r[2], r[3], 16.0, theme::BORDER());
-                    } else {
-                        ui.rounded(r[0], r[1], r[2], r[3], 16.0, theme::GLASS());
-                        ui.border(r[0], r[1], r[2], r[3], 16.0, theme::GLASS_BORDER());
-                    }
-                    draw_centered_text(ui, Face::LauncherMedium, 12.0, r, if active{theme::TEXT()}else{theme::MUTED()}, label);
-                    self.targets.push((r, Action::DetailTab(i as u8)));
-                }
-                let body = [cx, tab_y+44.0, cw, ch - (tab_y+44.0 - cy) - 48.0];
-                // This project's own failure, with its reason. The old banner
-                // guessed from the shared status line, so a failed shader could
-                // leave its page looking like nothing had happened.
-                let failure = self
-                    .catalog
-                    .failure_for(&proj)
-                    .map(str::to_owned)
-                    .or_else(|| {
-                        self.catalog
-                            .failed
-                            .as_ref()
-                            .is_some_and(|(src, id)| *src == proj.source && id.as_str() == proj.id.as_str())
-                            .then(|| "Download failed – check the connection and try again.".to_owned())
-                    });
-                let show_horizon_error = failure.is_some();
-                if let Some(msg) = failure.as_deref() {
-                    let msg = ui.fit_text(Face::LauncherRegular, 12.0, msg, body[2] - 24.0);
-                    ui.rounded(body[0], body[1], body[2], 36.0, 10.0, theme::CARD());
-                    ui.border(body[0], body[1], body[2], 36.0, 10.0, hex(0xff4444, 80));
-                    ui.text(Face::LauncherMedium, 12.0, body[0]+12.0, body[1]+10.0, hex(0xff6b6b,255), &msg);
-                }
-                if self.catalog.detail_tab==0 {
-                    ui.rounded(body[0], body[1]+ (if self.catalog.failed.is_some(){40.0}else{0.0}), body[2], 140.0, 12.0, theme::CARD());
-                    ui.border(body[0], body[1]+ (if self.catalog.failed.is_some(){40.0}else{0.0}), body[2], 140.0, 12.0, theme::BORDER());
-                    ui.text(Face::LauncherMedium, 14.0, body[0]+14.0, body[1]+ (if self.catalog.failed.is_some(){50.0}else{10.0}), theme::TEXT(), &proj.title);
-                    ui.text(Face::LauncherRegular, 12.5, body[0]+14.0, body[1]+ (if self.catalog.failed.is_some(){72.0}else{32.0}), theme::MUTED(), &format!("by {} · {} downloads · {}", proj.author, proj.downloads, proj.source.label()));
-                    let desc = if proj.summary.is_empty() { "No description available." } else { &proj.summary };
-                    for (li, line) in wrap_lines(ui, Face::LauncherRegular, 12.0, desc, body[2]-28.0, 4).iter().enumerate() {
-                        ui.text(Face::LauncherRegular, 12.0, body[0]+14.0, body[1]+ (if self.catalog.failed.is_some(){96.0}else{56.0}) + li as f32*15.0, theme::MUTED(), line);
-                    }
-                    // View project page external
-                    styled_button(ui, self.targets, [body[0]+14.0, body[1]+ (if self.catalog.failed.is_some(){160.0}else{120.0}), 140.0, 34.0], "Open website", Action::OpenProject(idx), BtnStyle::Secondary, true);
-                } else if self.catalog.detail_tab == 1 {
-                    let list_top = body[1] + if show_horizon_error { 40.0 } else { 0.0 };
-                    let list_bottom = body[1] + body[3];
-                    match project_details.as_ref() {
-                        None => draw_centered_text(
-                            ui,
-                            Face::LauncherRegular,
-                            12.0,
-                            [body[0], list_top + 8.0, body[2], 32.0],
-                            theme::MUTED(),
-                            "Loading project screenshots…",
-                        ),
-                        Some(Err(error)) => {
-                            let error = ui.fit_text(Face::LauncherRegular, 12.0, error, body[2] - 24.0);
-                            draw_centered_text(
-                                ui,
-                                Face::LauncherRegular,
-                                12.0,
-                                [body[0] + 8.0, list_top + 8.0, body[2] - 16.0, 40.0],
-                                theme::MUTED(),
-                                &error,
-                            );
-                        }
-                        Some(Ok(details)) if details.gallery.is_empty() => draw_centered_text(
-                            ui,
-                            Face::LauncherRegular,
-                            12.0,
-                            [body[0], list_top + 8.0, body[2], 32.0],
-                            theme::MUTED(),
-                            "No screenshots are listed for this project.",
-                        ),
-                        Some(Ok(details)) => {
-                            let cols = if cw < 500.0 { 2 } else { 3 };
-                            let gap = 10.0;
-                            let card_w = (body[2] - gap * (cols as f32 - 1.0)) / cols as f32;
-                            let card_h = 106.0;
-                            let row_stride = 116.0;
-                            let rows = details.gallery.len().div_ceil(cols);
-                            let max = (rows as f32 * row_stride - (list_bottom - list_top).max(0.0)).max(0.0);
-                            self.catalog.scroll = self.catalog.scroll.clamp(0.0, max);
-                            *self.list_view = Some([list_top, list_bottom, max]);
-                            let start = ui.batch_mut().vertices.len();
-                            for (i, image) in details.gallery.iter().enumerate() {
-                                let col = (i % cols) as f32;
-                                let row = (i / cols) as f32;
-                                let rect = [
-                                    body[0] + col * (card_w + gap),
-                                    list_top + row * row_stride - self.catalog.scroll,
-                                    card_w,
-                                    card_h,
-                                ];
-                                if rect[1] + rect[3] < list_top || rect[1] > list_bottom { continue; }
-                                ui.rounded(rect[0], rect[1], rect[2], rect[3], 10.0, theme::GLASS_INNER());
-                                let photo = [rect[0] + 5.0, rect[1] + 5.0, rect[2] - 10.0, 70.0];
-                                let key = self.catalog.queue_remote_preview(&self.home, &image.url, false);
-                                if let Some(preview) = self.catalog.preview(&key) {
-                                    ui.draw_dynamic_rgba_fit(preview_slot(i), preview.hash, preview.width, preview.height,
-                                        &preview.rgba, photo[0] + 1.0, photo[1] + 1.0,
-                                        photo[2] - 2.0, photo[3] - 2.0, 255);
-                                } else {
-                                    let message = if self.catalog.preview_failed(&key) { "Image unavailable" } else { "Loading image…" };
-                                    draw_centered_text(ui, Face::LauncherRegular, 10.5, photo, theme::DIM(), message);
-                                }
-                                let label = if image.title.is_empty() {
-                                    format!("Screenshot {}", i + 1)
-                                } else {
-                                    image.title.clone()
-                                };
-                                let label = ui.fit_text(Face::LauncherRegular, 10.5, &label, rect[2] - 12.0);
-                                draw_centered_text(ui, Face::LauncherRegular, 10.5,
-                                    [rect[0] + 4.0, rect[1] + 78.0, rect[2] - 8.0, 20.0],
-                                    theme::MUTED(), &label);
-                                self.targets.push((rect, Action::ViewProjectImage(i)));
-                            }
-                            let bounds = [ui.to_batch(body[0]), ui.to_batch(list_top), ui.to_batch(body[0] + body[2]), ui.to_batch(list_bottom)];
-                            ui.batch_mut().clip_since(start, bounds[0], bounds[1], bounds[2], bounds[3]);
-                        }
-                    }
-                } else {
-                    // Download tab
-                    let btn = [body[0]+14.0, body[1]+ (if show_horizon_error {40.0} else {0.0}) + 12.0, 200.0, 44.0];
-                    let downloading = self.catalog.downloading.as_ref().is_some_and(|(s,id)| *s==proj.source && id.as_str()==proj.id.as_str());
-                    if downloading {
-                        let progress = self.catalog.progress();
-                        ui.rounded(btn[0], btn[1], btn[2], btn[3], 10.0, theme::GLASS());
-                        draw_centered_text(ui, Face::LauncherMedium, 13.0, btn, theme::MUTED(),
-                            &format!("Downloading… {:.0}%", progress * 100.0));
-                        let note = if self.catalog.job_is_stalled(std::time::Duration::from_secs(20)) {
-                            "Still working: verifying the file can take a moment on mobile data."
-                        } else {
-                            "Keep the app open until it finishes."
-                        };
-                        ui.text(Face::LauncherRegular, 11.5, body[0]+14.0, btn[1]+54.0, theme::MUTED(),
-                            &ui.fit_text(Face::LauncherRegular, 11.5, note, body[2]-28.0));
-                    } else if let Some(err) = self.catalog.failure_for(&proj).map(str::to_owned) {
-                        styled_button(ui, self.targets, btn, "Retry download", Action::Install(idx), BtnStyle::Primary, true);
-                        let err = ui.fit_text(Face::LauncherRegular, 11.5, &err, body[2]-28.0);
-                        ui.text(Face::LauncherRegular, 11.5, body[0]+14.0, btn[1]+54.0, hex(0xff6b6b,255), &err);
-                    } else {
-                        styled_button(ui, self.targets, btn, "Download & Install", Action::Install(idx), BtnStyle::Primary, true);
-                        ui.text(Face::LauncherRegular, 11.5, body[0]+14.0, btn[1]+54.0, theme::MUTED(), "Will appear in Installed after download.");
-                    }
-                }
-                // Footer back note
-                ui.rounded(cx, cy+ch-44.0, cw, 44.0, 11.0, theme::CARD());
-                ui.border(cx, cy+ch-44.0, cw, 44.0, 11.0, theme::BORDER());
-                styled_button(ui, self.targets, [cx + 10.0, cy+ch-40.0, 100.0, 36.0],
-                    "← List", Action::CloseDetail, BtnStyle::Secondary, true);
-                styled_button(ui, self.targets, [cx + 118.0, cy+ch-40.0, 88.0, 36.0],
-                    "Home", Action::Page(Page::Play), BtnStyle::Secondary, true);
-                return;
-            } else {
-                self.catalog.detail_index=None;
-            }
-        }
+        let origins: &[Origin] = if page == Page::Packs {
+            &[Origin::Modrinth, Origin::CurseForge, Origin::Both]
+        } else {
+            &[
+                Origin::Horizon,
+                Origin::Modrinth,
+                Origin::CurseForge,
+                Origin::Both,
+            ]
+        };
+        let active_origin = match page {
+            Page::Mods => self.catalog.config.mod_source,
+            Page::Shaders => self.catalog.config.shader_source,
+            _ => self.catalog.config.pack_source,
+        };
+        let origin_action = |o: Origin| match page {
+            Page::Mods => Action::ModSource(o),
+            Page::Shaders => Action::ShaderSource(o),
+            _ => Action::PackSource(o),
+        };
 
-        // Black glassy: clean header — title + hint only, no origin loader pills (Forge/Fabric/All/Installed/Popular removed)
+        // Top header row with Modrinth | CurseForge | Both platform selector!
         if !compact {
             ui.text(Face::LauncherMedium, 24.0, cx, cy, theme::TEXT(), title);
             let acc_w = 186.0;
-            let hint_max = (cw - acc_w - 32.0).max(120.0);
+            let tab_item_w = if origins.len() == 4 { 84.0 } else { 88.0 };
+            let seg_w = 8.0 + origins.len() as f32 * tab_item_w;
+            let hint_max = (cw - acc_w - seg_w - 32.0).max(120.0);
             let fitted_hint = ui.fit_text(Face::LauncherRegular, 13.0, hint, hint_max);
             ui.text(Face::LauncherRegular, 13.0, cx, cy + 30.0, theme::MUTED(), &fitted_hint);
-            draw_account_chip(ui, self.targets, [cx + cw - acc_w, cy + 4.0, acc_w, 38.0], account_status, self.login.signed_in);
-        } else if page == Page::Shaders {
-            let source_w = (cw - 12.0).clamp(0.0, 132.0);
-            let source_rect = [cx + cw - source_w - 4.0, cy - 4.0, source_w, 32.0];
-            let title_w = (source_rect[0] - cx - 12.0).max(0.0);
-            let fitted_title = ui.fit_text(Face::LauncherMedium, 18.0, title, title_w);
-            ui.text(Face::LauncherMedium, 18.0, cx, cy, theme::TEXT(), &fitted_title);
-            self.draw_shader_source_button(ui, source_rect);
+
+            draw_account_chip(
+                ui,
+                self.targets,
+                [cx + cw - acc_w, cy + 4.0, acc_w, 38.0],
+                account_status,
+                self.login.signed_in,
+            );
+
+            let seg_x = cx + cw - acc_w - seg_w - 10.0;
+            ui.rounded(seg_x, cy + 4.0, seg_w, 38.0, 10.0, theme::CARD());
+            ui.border(seg_x, cy + 4.0, seg_w, 38.0, 10.0, theme::BORDER());
+            for (idx, &origin) in origins.iter().enumerate() {
+                let ox = seg_x + 4.0 + idx as f32 * tab_item_w;
+                let orect = [ox + 1.0, cy + 8.0, tab_item_w - 2.0, 30.0];
+                let is_on = active_origin == origin;
+                if is_on {
+                    ui.rounded(orect[0], orect[1], orect[2], orect[3], 7.0, theme::CRIMSON_BADGE());
+                    ui.border(orect[0], orect[1], orect[2], orect[3], 7.0, theme::CRIMSON());
+                }
+                draw_centered_text(
+                    ui,
+                    Face::LauncherMedium,
+                    12.5,
+                    orect,
+                    if is_on { theme::ON_CRIMSON() } else { theme::MUTED() },
+                    origin.label(),
+                );
+                self.targets.push((orect, origin_action(origin)));
+            }
         } else {
             ui.text(Face::LauncherMedium, 18.0, cx, cy, theme::TEXT(), title);
+            let seg_y = cy + 26.0;
+            ui.rounded(cx, seg_y, cw, 34.0, 9.0, theme::CARD());
+            ui.border(cx, seg_y, cw, 34.0, 9.0, theme::BORDER());
+            let tab_item_w = (cw - 8.0) / origins.len() as f32;
+            for (idx, &origin) in origins.iter().enumerate() {
+                let orect = [
+                    cx + 4.0 + idx as f32 * tab_item_w + 1.0,
+                    seg_y + 3.0,
+                    tab_item_w - 2.0,
+                    28.0,
+                ];
+                let is_on = active_origin == origin;
+                if is_on {
+                    ui.rounded(orect[0], orect[1], orect[2], orect[3], 6.5, theme::CRIMSON());
+                }
+                draw_centered_text(
+                    ui,
+                    Face::LauncherMedium,
+                    12.0,
+                    orect,
+                    if is_on { theme::ON_CRIMSON() } else { theme::MUTED() },
+                    origin.label(),
+                );
+                self.targets.push((orect, origin_action(origin)));
+            }
         }
 
         // Unified Command Toolbar Card (Search + Search CTA + Open folder + Import file)
@@ -3164,12 +2706,7 @@ impl DrawCtx<'_> {
             let btn_folder_w = 124.0;
             let btn_import_w = 124.0;
             let btn_search_w = 118.0;
-            let btn_source_w = if page == Page::Shaders { 116.0 } else { 0.0 };
-            let source_gap = if btn_source_w > 0.0 { 8.0 } else { 0.0 };
-            let min_input_w = if btn_source_w > 0.0 { 120.0 } else { 160.0 };
-            let input_w = (cw - btn_folder_w - btn_import_w - btn_search_w - btn_source_w
-                - 44.0 - source_gap)
-                .max(min_input_w);
+            let input_w = (cw - btn_folder_w - btn_import_w - btn_search_w - 44.0).max(160.0);
             let srect = [cx + 8.0, bar_y + 7.0, input_w, 38.0];
             ui.rounded(srect[0], srect[1], srect[2], srect[3], 9.0, theme::CARD_INNER());
             ui.border(
@@ -3210,10 +2747,6 @@ impl DrawCtx<'_> {
                 true,
             );
             bx += btn_search_w + 8.0;
-            if btn_source_w > 0.0 {
-                self.draw_shader_source_button(ui, [bx, bar_y + 7.0, btn_source_w, 38.0]);
-                bx += btn_source_w + 8.0;
-            }
             styled_button(
                 ui,
                 self.targets,
@@ -3598,7 +3131,7 @@ impl DrawCtx<'_> {
                         );
                     }
 
-                    // Widened "View details" button stays inside the launcher.
+                    // Widened "View details" button so the full label never truncates!
                     if !compact
                         && (p.page.starts_with("https://") || p.page.starts_with("http://"))
                         && y + card_h - btn_h - 12.0 >= top
@@ -3609,7 +3142,7 @@ impl DrawCtx<'_> {
                             self.targets,
                             [x + 14.0, y + card_h - btn_h - 12.0, 128.0, btn_h],
                             "View details",
-                            Action::ViewDetail(i),
+                            Action::OpenDetail(i),
                             BtnStyle::Secondary,
                             true,
                         );
@@ -3682,26 +3215,7 @@ impl DrawCtx<'_> {
                             BtnStyle::Primary,
                             true,
                         );
-                        // Say why the last attempt failed, on the card itself:
-                        // otherwise the button just changed its word to Retry.
-                        if let Some(why) = self.catalog.failure_for(p) {
-                            let why = ui.fit_text(Face::LauncherRegular, 10.0, why, btn_rect[2]);
-                            ui.text(Face::LauncherRegular, 10.0, btn_rect[0], btn_rect[1] - 12.0,
-                                hex(0xff6b6b, 230), &why);
-                        }
                     }
-                }
-
-                // Card taps open the in-launcher About / Screenshots / Download view.
-                // Add the broad hit target after the small button targets so Install
-                // remains the top-priority action within its own button bounds.
-                let visible_top = y.max(top);
-                let visible_bottom = (y + card_h).min(bottom);
-                if visible_bottom > visible_top {
-                    self.targets.push((
-                        [x, visible_top, card_w, visible_bottom - visible_top],
-                        Action::ViewDetail(i),
-                    ));
                 }
 
                 // Staggered card entrance slide + micro-scale + fade!
@@ -3717,6 +3231,13 @@ impl DrawCtx<'_> {
                         [x + card_w * 0.5, y + card_h * 0.5],
                         ease,
                     );
+                }
+                // Tapping the card itself (outside its buttons - they were
+                // pushed first and win) opens the entry's own page.
+                let card_rect = [x, y, card_w, card_h];
+                self.list_targets.push((card_rect, Action::OpenDetail(i)));
+                if y + card_h > top && y < bottom {
+                    self.targets.push((card_rect, Action::OpenDetail(i)));
                 }
             }
             // Trim the straddling cards to the list view, so partially
@@ -6717,37 +6238,27 @@ impl Launcher {
         ui.batch.fill(&gui.atlas, 0.0, 0.0, full_w * scale, full_h * scale, theme::BG());
         draw_launcher_scene(&mut ui, full_w, full_h, self.launch_start.elapsed().as_secs_f32());
         let scene_end = ui.batch_mut().vertices.len();
-        // Only vertical insets move the controls. The launcher is a full-bleed
-        // immersive surface: its scene is painted across `full_w`, so shrinking
-        // the control width to a horizontal "visible frame" left a dead strip of
-        // wallpaper between the destination rail and the real screen edge, and
-        // pulled the centred PLAY pill left of centre (measured on a 2412 px
-        // screen: layout 2160 px, rail short by 213 px, PLAY at 44.4%). Rails
-        // carry their own edge insets, so they belong on the true edges.
         let mut offset = [0.0f32; 2];
-        if let Some([_, top, _, bottom]) = crate::native_ime::launcher_visible_bounds() {
+        if let Some([left, top, right, bottom]) = crate::native_ime::launcher_visible_bounds() {
             let density = ui.density;
+            let x0 = (left as f32 / density).min(full_w);
             let y0 = (top as f32 / density).min(full_h);
+            let x1 = (right as f32 / density).min(full_w);
             let y1 = (bottom as f32 / density).min(full_h);
-            if y1 - y0 >= 120.0 {
-                offset = [0.0, y0];
+            if x1 - x0 >= 120.0 && y1 - y0 >= 120.0 {
+                offset = [x0, y0];
+                ui.w = x1 - x0;
                 ui.h = y1 - y0;
             }
         }
         let (w, h) = (ui.w, ui.h);
-        // Controls are drawn in surface coordinates, then translated by
-        // `offset` (vertical only). `w` is the full surface width, so the rails
-        // land on the real screen edges and the Play pill centres on screen.
-        let visible_right = w;
         ui.cursor = (self.cursor.0 as f32 / ui.density - offset[0],
                      self.cursor.1 as f32 / ui.density - offset[1]);
 
         let compact = w < 760.0;
-        // Liquid Glass keeps Home full-bleed so its left rail remains visible
-        // on secondary tabs; the classic lobby is full-bleed on Overview.
-        // Home and all of its tabs are always full-bleed in Liquid Glass: both
-        // rails are part of the layout, not chrome around it.
-        let full_bleed_home = self.catalog.page == Page::Play && theme::liquid();
+        // The lobby home draws full-bleed with its own corner controls, so
+        // the dock shell / compact header stay out of its way entirely.
+        let lobby = self.catalog.page == Page::Play && self.home_tab == HomeTab::Overview;
         let account_status = self
             .volt_accounts
             .active()
@@ -6782,35 +6293,27 @@ impl Launcher {
                     })
                 }),
                 preview_rect: &mut self.preview_rect,
-                surface_right: visible_right,
+                photos: &mut self.photos,
             };
-            content_area = if full_bleed_home {
+            content_area = if lobby {
                 [0.0, 0.0, w, h]
             } else if compact {
                 ctx.draw_compact_header(&mut ui, w, &account_status);
                 [6.0, 102.0, (w - 12.0).max(120.0), (h - 148.0).max(120.0)]
             } else {
                 ctx.draw_shell(&mut ui, w, h, &account_status);
-                // Black glassy far-left rail: reserve left gutter instead of bottom
-                let left = 94.0;
-                [left, 12.0, (w - left - 8.0).max(240.0), (h - 24.0).max(120.0)]
+                [6.0, 14.0, (w - 12.0).max(240.0), (h - 102.0).max(120.0)]
             };
 
             page_v_start = ui.batch_mut().vertices.len();
             let page = ctx.catalog.page;
             match page {
-                Page::Play => ctx.draw_instance_page(&mut ui, content_area, compact, &account_status),
-                Page::Mods => {
-                    // Browse shares the destination rail with Home.
-                    let area = ctx.with_right_rail(&mut ui, content_area);
-                    ctx.draw_instance_page(&mut ui, area, compact, &account_status)
-                }
+                Page::Play | Page::Mods => ctx.draw_instance_page(&mut ui, content_area, compact, &account_status),
                 Page::Account => {
                     ctx.draw_account_page(&mut ui, content_area, compact, &account_status)
                 }
                 Page::Packs | Page::Shaders => {
-                    let area = ctx.with_right_rail(&mut ui, content_area);
-                    ctx.draw_catalog_page(&mut ui, area, compact, page, &account_status)
+                    ctx.draw_catalog_page(&mut ui, content_area, compact, page, &account_status)
                 }
                 Page::Installed => {
                     ctx.draw_installed_page(&mut ui, content_area, compact, &account_status)
@@ -6842,7 +6345,7 @@ impl Launcher {
             }
         }
 
-        if compact && !full_bleed_home {
+        if compact && !lobby {
             let status = self.error.as_deref().unwrap_or(&self.catalog.status);
             if !status.is_empty() {
                 let sfit = ui.fit_text(Face::LauncherRegular, 12.0, status, (w - 196.0).max(40.0));
@@ -6933,6 +6436,15 @@ impl Launcher {
             } else {
                 self.modal_anim = None;
             }
+        }
+        // The full-screen picture viewer sits over every page and modal:
+        // the tapped screenshot, world icon, replay cover or gallery shot,
+        // letterboxed large, with Back closing it (so does any tap).
+        if let Some(view) = self.photo_view.clone() {
+            self.targets.clear();
+            self.list_targets.clear();
+            self.list_view = None;
+            draw_photo_viewer(&mut ui, &mut self.targets, &mut self.photos, &view, w, h);
         }
         if let Some([top, bottom, maximum]) = self.list_view
             && maximum > 0.0
@@ -7203,6 +6715,82 @@ impl Launcher {
                 self.page_anim = Some((std::time::Instant::now(), 0.45));
                 self.catalog.browse(&self.home);
             }
+            Some(Action::OpenDetail(i)) => {
+                self.catalog.open_detail(i);
+                self.page_anim = Some((std::time::Instant::now(), 0.45));
+            }
+            Some(Action::CloseDetail) => {
+                self.catalog.close_detail();
+                self.page_anim = Some((std::time::Instant::now(), 0.45));
+            }
+            Some(Action::ClosePhoto) => {
+                self.photo_view = None;
+            }
+            Some(Action::ViewScreenshot(i)) => {
+                if let Some(name) = self.catalog.screenshots.get(i) {
+                    let path = self
+                        .catalog
+                        .config
+                        .game_home(&self.home)
+                        .join("screenshots")
+                        .join(name);
+                    self.photo_view = Some(PhotoView {
+                        title: name.clone(),
+                        key: crate::photo_cache::file_key(&path),
+                        source: crate::photo_cache::Source::File(path),
+                    });
+                }
+            }
+            Some(Action::ViewWorld(i)) => {
+                let saves = self.catalog.config.game_home(&self.home).join("saves");
+                let worlds = world_folders_in(&saves);
+                if let Some(world) = worlds.get(i) {
+                    let path = saves.join(world).join("icon.png");
+                    self.photo_view = Some(PhotoView {
+                        title: world.clone(),
+                        key: crate::photo_cache::file_key(&path),
+                        source: crate::photo_cache::Source::File(path),
+                    });
+                }
+            }
+            Some(Action::ViewReplayCover(i)) => {
+                if let Some(replay) = self.catalog.replays.get(i) {
+                    let path = replay_cover_path(
+                        &self
+                            .catalog
+                            .config
+                            .game_home(&self.home)
+                            .join("replays")
+                            .join(&replay.file_name),
+                    );
+                    if path.is_file() {
+                        self.photo_view = Some(PhotoView {
+                            title: replay.file_name.clone(),
+                            key: crate::photo_cache::file_key(&path),
+                            source: crate::photo_cache::Source::File(path),
+                        });
+                    }
+                }
+            }
+            Some(Action::ViewGalleryImage(i)) => {
+                if let Some(image) = self
+                    .catalog
+                    .detail
+                    .as_ref()
+                    .and_then(|view| view.details.as_ref())
+                    .and_then(|details| details.gallery.get(i))
+                {
+                    self.photo_view = Some(PhotoView {
+                        title: if image.title.is_empty() {
+                            "Screenshot".into()
+                        } else {
+                            image.title.clone()
+                        },
+                        key: format!("https:{}", image.url),
+                        source: crate::photo_cache::Source::Https(image.url.clone()),
+                    });
+                }
+            }
             Some(Action::OpenProject(i)) => {
                 if let Some(url) = self.catalog.results.get(i).map(|p| p.page.as_str()) {
                     self.catalog.status = if crate::platform::open_url(url) {
@@ -7212,44 +6800,6 @@ impl Launcher {
                     };
                 }
             }
-            Some(Action::ViewDetail(i)) => {
-                self.catalog.detail_index = Some(i);
-                self.catalog.detail_tab = 0;
-                self.catalog.scroll = 0.0;
-            }
-            Some(Action::CloseDetail) => {
-                self.catalog.detail_index = None;
-            }
-            Some(Action::DetailTab(tab)) => {
-                self.catalog.detail_tab = tab;
-                self.catalog.scroll = 0.0;
-            }
-            Some(Action::ViewScreenshot(i)) => {
-                self.catalog.viewer = Some(crate::catalog::ViewerItem::Screenshot(i));
-            }
-            Some(Action::ViewWorld(i)) => {
-                self.catalog.viewer = Some(crate::catalog::ViewerItem::World(i));
-            }
-            Some(Action::ViewServer(i)) => {
-                self.catalog.server_detail = Some(i);
-                self.catalog.scroll = 0.0;
-            }
-            Some(Action::CloseServer) => self.catalog.server_detail = None,
-            Some(Action::ViewServerImage(i)) => {
-                self.catalog.viewer = Some(crate::catalog::ViewerItem::Server(i));
-            }
-            Some(Action::ViewReplay(i)) => {
-                self.catalog.replay_detail = Some(i);
-                self.catalog.scroll = 0.0;
-            }
-            Some(Action::CloseReplayDetail) => self.catalog.replay_detail = None,
-            Some(Action::ViewReplayImage(i)) => {
-                self.catalog.viewer = Some(crate::catalog::ViewerItem::Replay(i));
-            }
-            Some(Action::ViewProjectImage(i)) => {
-                self.catalog.viewer = Some(crate::catalog::ViewerItem::Project(i));
-            }
-            Some(Action::CloseViewer) => self.catalog.viewer = None,
             Some(Action::OpenFolder(kind)) => {
                 crate::platform::hide();
                 let folder = match kind {
@@ -7601,24 +7151,14 @@ impl Launcher {
             }
             Some(Action::LoginLink) => self.login.open_link(),
             Some(Action::HomeTab(tab)) => {
-                // The rail is always reachable, including from the catalog
-                // pages: a destination tap returns to Home on that tab. The
-                // slide is animated only between two secondary tabs - landing
-                // on Overview never fades, so a rail tap always ends on the
-                // tab that was tapped.
-                let from_catalog = self.catalog.page != Page::Play;
-                self.catalog.page = Page::Play;
-                self.catalog.detail_index = None;
-                self.catalog.editing = None;
-                if tab != HomeTab::Overview && !from_catalog && tab != self.home_tab {
+                if self.catalog.page == Page::Play && tab != self.home_tab {
                     let order = |t: HomeTab| match t {
                         HomeTab::Overview => 0,
                         HomeTab::Worlds => 2,
                         HomeTab::Multiplayer => 3,
                         HomeTab::Replays => 4,
                         HomeTab::Screenshots => 5,
-                        HomeTab::VoltBoost => 6,
-                        HomeTab::Console => 7,
+                        HomeTab::Console => 6,
                     };
                     let dir = if order(tab) >= order(self.home_tab) { 1.0 } else { -1.0 };
                     self.tab_anim = Some((std::time::Instant::now(), dir));
@@ -7630,28 +7170,17 @@ impl Launcher {
                     self.catalog.refresh_screenshots(&self.home);
                 } else if tab == HomeTab::Replays {
                     self.catalog.refresh_replays(&self.home);
-                } else if tab == HomeTab::VoltBoost {
-                    // The inline list opens at the top, like the dialog does.
-                    self.catalog.volt_modal_scroll = 0.0;
                 }
                 self.home_tab = tab;
                 self.catalog.page = Page::Play;
                 self.catalog.scroll = 0.0;
                 self.catalog.editing = None;
-                self.catalog.viewer = None;
-                self.catalog.server_detail = None;
-                self.catalog.replay_detail = None;
-                self.catalog.detail_index = None;
-                self.catalog.detail_tab = 0;
                 if crate::platform::active() { crate::platform::hide(); }
             }
             Some(Action::Page(page)) => {
                 if page == Page::Play { self.home_tab = HomeTab::Overview; }
-                self.catalog.viewer = None;
-                self.catalog.server_detail = None;
-                self.catalog.replay_detail = None;
-                self.catalog.detail_index = None;
-                self.catalog.detail_tab = 0;
+                self.catalog.close_detail();
+                self.photo_view = None;
                 self.catalog.volt_boost_modal = false;
                 self.controls_studio.open = false;
                 self.catalog.editing = None;
@@ -7750,7 +7279,6 @@ impl Launcher {
                 };
             }
             Some(Action::DeleteReplay(index)) => {
-                self.catalog.replay_detail = None;
                 if let Some(replay) = self.catalog.replays.get(index) {
                     self.catalog.status = match std::fs::remove_file(&replay.path) {
                         Ok(()) => "Replay deleted.".into(),
@@ -7971,17 +7499,8 @@ impl Launcher {
                 };
             }
             Some(Action::OpenVoltBoost) => {
-                // Boost opens as a tab so the launcher and its rails stay
-                // reachable; the dialog only serves the classic dashboard.
-                self.catalog.page = Page::Play;
-                self.catalog.detail_index = None;
-                self.home_tab = HomeTab::VoltBoost;
+                self.catalog.volt_boost_modal = true;
                 self.catalog.volt_modal_scroll = 0.0;
-                self.catalog.volt_boost_modal = false;
-                self.catalog.scroll = 0.0;
-                if crate::platform::active() {
-                    crate::platform::hide();
-                }
             }
             Some(Action::CloseVoltBoost) => {
                 self.catalog.volt_boost_modal = false;
@@ -8104,23 +7623,6 @@ impl Launcher {
                     if let Err(e) = on.try_save(&game_dir) {
                         self.catalog.status = format!("Could not save the mod list: {e}");
                         return Ok(());
-                    }
-                    // The in-game checks read the engine flags as well as the
-                    // catalog (`flag || catalog.is_on(..)`), and the catalog is
-                    // what options.txt keeps. Write it here too, or turning a
-                    // Woven mod off in the launcher left its engine flag on and
-                    // the mod kept running in game.
-                    if let Some(vmod) = horizon_client::volt_mods::VoltModId::from_slug(id) {
-                        let path = game_dir.join("options.txt");
-                        let mut settings = horizon_client::settings::Settings::load(&path);
-                        horizon_client::volt_mods::apply_mod_to_engine(
-                            vmod,
-                            enable,
-                            &mut settings.extras,
-                            &mut settings.horizon,
-                        );
-                        settings.save(&path);
-                        self.catalog.extras = settings.extras.clone();
                     }
                     self.catalog.bundled_disabled = on.disabled.clone();
                     crate::documents::note_mods_changed(&game_dir);
@@ -8341,6 +7843,13 @@ impl Launcher {
     }
 
     pub(super) fn handle_escape(&mut self) {
+        if self.photo_view.take().is_some() {
+            return;
+        }
+        if self.catalog.detail.is_some() {
+            self.catalog.close_detail();
+            return;
+        }
         if let Some(prompt) = self.update_prompt.take() {
             crate::volt_updater::mark_update_seen(&self.home, &prompt.info.tag_name);
             return;
@@ -8393,6 +7902,50 @@ impl Launcher {
             self.catalog.edit(out, &self.home);
         }
     }
+}
+
+/// The full-screen photo viewer: a near-black scrim, the picture fitted
+/// large in the middle, its name beside a glass Back chip on top.
+fn draw_photo_viewer(
+    ui: &mut Ui,
+    targets: &mut Vec<([f32; 4], Action)>,
+    photos: &mut crate::photo_cache::PhotoCache,
+    view: &PhotoView,
+    w: f32,
+    h: f32,
+) {
+    use crate::photo_cache::Fit;
+    use horizon_client::ui_theme::color::hex;
+    ui.rounded(0.0, 0.0, w, h, 0.0, hex(0x05070b, 240));
+    let (cw, ch) = Fit::Full.canvas();
+    let avail_w = (w - 24.0).max(64.0);
+    let avail_h = (h - 86.0).max(64.0);
+    let scale = (avail_w / cw as f32).min(avail_h / ch as f32);
+    let (dw, dh) = (cw as f32 * scale, ch as f32 * scale);
+    let (dx, dy) = ((w - dw) * 0.5, 56.0 + (avail_h - dh) * 0.5);
+    let mut drawn = false;
+    if let Some(photo) = photos.get(&view.key, &view.source, Fit::Full) {
+        let fade = (photo.loaded_at.elapsed().as_secs_f32() / 0.25).clamp(0.0, 1.0);
+        let alpha = (ease_out_cubic(fade) * 255.0).round() as u8;
+        drawn = ui.draw_dynamic_rgba(28, photo.hash, cw, ch, &photo.rgba, dx, dy, dw, dh, alpha);
+    }
+    if !drawn {
+        let text = if photos.failed(&view.key, Fit::Full) {
+            "This picture can't be read."
+        } else {
+            "Loading picture..."
+        };
+        draw_centered_text(ui, Face::LauncherRegular, 14.0, [0.0, dy, w, dh], theme::MUTED(), text);
+    }
+    let back = [12.0, 10.0, 92.0, 36.0];
+    ui.rounded(back[0], back[1], back[2], back[3], 18.0, theme::GLASS());
+    ui.border(back[0], back[1], back[2], back[3], 18.0, theme::GLASS_BORDER());
+    draw_centered_text(ui, Face::LauncherMedium, 13.0, back, theme::TEXT(), "< Back");
+    targets.push((back, Action::ClosePhoto));
+    let title = ui.fit_text(Face::LauncherMedium, 14.0, &view.title, (w - 130.0).max(60.0));
+    ui.text(Face::LauncherMedium, 14.0, back[0] + back[2] + 12.0, 19.0, theme::TEXT(), &title);
+    // Any tap outside the picture closes the viewer too.
+    targets.push(([0.0, 0.0, w, h], Action::ClosePhoto));
 }
 
 fn wrap_modal_lines(ui: &Ui, lines: &[String], font_sz: f32, max_w: f32) -> Vec<(String, bool)> {
@@ -8581,13 +8134,15 @@ fn draw_update_prompt(
     );
 }
 
-#[allow(dead_code)]
 fn draw_volt_boost_modal(
     ui: &mut Ui,
     targets: &mut Vec<([f32; 4], Action)>,
     list_targets: &mut Vec<([f32; 4], Action)>,
     catalog: &mut Catalog,
 ) -> Option<[f32; 3]> {
+    use horizon_client::extras::Item;
+    use horizon_client::volt_features::VoltBoostPreset;
+
     let (w, h) = (ui.w, ui.h);
     let scale = ui.density / ui.batch.scale;
     ui.batch
@@ -8597,23 +8152,6 @@ fn draw_volt_boost_modal(
     let mh = (h - 28.0).clamp(240.0, 500.0);
     let mx = ((w - mw) * 0.5).round();
     let my = ((h - mh) * 0.5).round();
-    draw_volt_boost_panel(ui, targets, list_targets, catalog, [mx, my, mw, mh], true)
-}
-
-/// The Volt Boost card. `modal` keeps the Done button (the dialog closes); the
-/// tab form swaps it for Back, which returns to the dashboard.
-fn draw_volt_boost_panel(
-    ui: &mut Ui,
-    targets: &mut Vec<([f32; 4], Action)>,
-    list_targets: &mut Vec<([f32; 4], Action)>,
-    catalog: &mut Catalog,
-    panel: [f32; 4],
-    modal: bool,
-) -> Option<[f32; 3]> {
-    use horizon_client::extras::Item;
-    use horizon_client::volt_features::VoltBoostPreset;
-
-    let [mx, my, mw, mh] = panel;
 
     ui.rounded(mx, my, mw, mh, 16.0, theme::CARD());
     ui.rounded(mx + 8.0, my + 8.0, mw * 0.55, 86.0, 12.0, theme::HERO_GLOW_SOFT());
@@ -8795,26 +8333,15 @@ fn draw_volt_boost_panel(
         BtnStyle::CrimsonOutline,
         true,
     );
-    if modal {
-        styled_button(
-            ui,
-            targets,
-            [mx + mw - 122.0, footer_y + 2.0, 104.0, 36.0],
-            "Done",
-            Action::CloseVoltBoost,
-            BtnStyle::Primary,
-            true,
-        );
-    } else {
-        styled_button(
-            ui,
-            targets,
-            [mx + mw - 122.0, footer_y + 2.0, 104.0, 36.0],
-            "Back",
-            Action::HomeTab(HomeTab::Overview),
-            BtnStyle::Primary,
-            true,
-        );
-    }
+    styled_button(
+        ui,
+        targets,
+        [mx + mw - 122.0, footer_y + 2.0, 104.0, 36.0],
+        "Done",
+        Action::CloseVoltBoost,
+        BtnStyle::Primary,
+        true,
+    );
     Some([list_top, list_bottom, max_scroll])
 }
+

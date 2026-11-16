@@ -51,6 +51,8 @@ mod gallery;
 mod native_ime;
 #[path = "android/performance.rs"]
 mod performance;
+#[path = "android/photo_cache.rs"]
+mod photo_cache;
 #[path = "android/platform.rs"]
 mod platform;
 #[rustfmt::skip]

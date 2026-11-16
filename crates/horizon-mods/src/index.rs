@@ -121,6 +121,10 @@ pub struct Project {
     pub source: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub icon: Option<String>,
+    /// Gallery pictures for the project's page, `https://` (the registry's
+    /// publish job fills them from the project's `screenshots/` directory).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub screenshots: Vec<String>,
     /// The author's minisign public key: every version must be signed with
     /// it. None: unsigned (the SHA-256 still pins the reviewed file).
     #[serde(default, skip_serializing_if = "Option::is_none")]

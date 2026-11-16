@@ -378,6 +378,7 @@ pub fn project(entry: &Entry, src: &Sources) -> Result<Project, Vec<String>> {
         license: entry.license.clone(),
         source: entry.source.clone(),
         icon,
+        screenshots: Vec::new(),
         key: entry.key.as_ref().map(|k| k.trim().to_owned()),
         versions,
         downloads: 0,

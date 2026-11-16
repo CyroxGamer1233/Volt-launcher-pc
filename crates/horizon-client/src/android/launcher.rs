@@ -97,6 +97,11 @@ pub(super) struct Launcher {
     pub(super) transition_guard_until: Option<Instant>,
     pub(super) needs_redraw: bool,
     last_redraw: Instant,
+    /// Decoded gallery pictures (screenshots, world icons, favicons, replay
+    /// covers, catalog gallery shots), letterboxed off-thread.
+    pub(super) photos: crate::photo_cache::PhotoCache,
+    /// The full-screen photo viewer, over every page until Back.
+    pub(super) photo_view: Option<pages::PhotoView>,
 }
 
 impl Launcher {
@@ -232,6 +237,8 @@ impl Launcher {
             transition_guard_until: None,
             needs_redraw: true,
             last_redraw: Instant::now() - Duration::from_secs(1),
+            photos: crate::photo_cache::PhotoCache::new(),
+            photo_view: None,
         }
     }
 
@@ -979,6 +986,9 @@ impl ApplicationHandler for Launcher {
             self.catalog.edit(out, &self.home);
         }
         self.catalog.poll(&self.home);
+        if self.photos.poll() {
+            self.needs_redraw = true;
+        }
         if let Some(notice) = crate::documents::poll() {
             self.catalog.status = notice.text;
             if let Some((driver_label, driver_path)) = notice.driver_imported {
@@ -1101,6 +1111,7 @@ impl ApplicationHandler for Launcher {
             || self.is_animating()
             || self.worker.is_some()
             || self.catalog.busy()
+            || self.photos.busy()
             || (self.pending_play && !crate::engine_data_ready())
         {
             Duration::from_millis(16)

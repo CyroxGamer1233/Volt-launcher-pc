@@ -5,7 +5,7 @@
 //! manifest), and files the index says were taken down are refused and turned off.
 use super::{
     FileRef, GAME, Kind, Project, Query, Source, SourceId, Version,
-    details::{Details, Link},
+    details::{Details, Image, Link},
     download, installed, java,
 };
 use horizon_mods::index::{self, Index, Trust};
@@ -454,8 +454,22 @@ impl Source for Registry {
             label: format!("@{o}"),
             url: format!("https://github.com/{o}"),
         });
+        // The registry's gallery shots, https only, at most eight.
+        let gallery = p
+            .screenshots
+            .iter()
+            .filter(|u| u.starts_with("https://"))
+            .take(8)
+            .map(|u| Image {
+                url: u.clone(),
+                title: String::new(),
+                description: String::new(),
+                featured: false,
+            })
+            .collect();
         Ok(Details {
             body,
+            gallery,
             links: [
                 Link {
                     label: "Source".into(),

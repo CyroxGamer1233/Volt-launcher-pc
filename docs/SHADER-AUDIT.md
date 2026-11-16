@@ -75,3 +75,35 @@ What changed:
   loader both resolve that single wrapper; two wrapped candidates in one
   archive stay refused, and every security check (path safety, size
   caps, mandatory checksum, host allowlist) is unchanged.
+
+## Registry `.hshader` compatibility mode (2026-11-15)
+
+The registry's shader packs (Aurora, Photon, Nimbe and the rest) are written
+for newer lines of the native shader API than this fork's snapshot: late-0.1
+and 0.2 manifests add `[vertex]`, `[shadow]`, `[reflection]`, `[[textures]]`,
+`[[materials]]`, per-stage `files = [...]` lists and post passes with named
+`output` buffers. Our strict `deny_unknown_fields` reader refused them whole,
+which is exactly the "shader download error" players hit at install.
+
+The fix is a compatibility mode, not a weakening of the strict path:
+
+- `Manifest::parse` still reads packs inside our surface strictly; only when
+  that fails does it re-read leniently, marking `Manifest::compat`. Id, name,
+  version and schema rules, plain-path checks on every kept file, and all
+  size caps still hold.
+- Sections this build cannot serve are ignored; a post pass that writes a
+  named buffer (`output`/`scale`/`compute`) is dropped rather than mis-chained.
+- `check` keeps the stages whose WGSL compiles against our prelude and drops
+  the rest; the pack installs and renders what it can (it fails only when
+  nothing compiles). The unused-option rule is per-stage anyway: the renderer
+  passes each pipeline only the constants its module declares.
+- The `Frame` uniform grew from 28 to 62 fields (816 bytes), matching the
+  upstream 0.2 layout byte for byte, so newer sky WGSL that reads
+  `frame.wetness`, `frame.camera_motion`, `frame.eye_light_smooth` etc.
+  compiles and runs. Real values feed the biome, motion and eased fields;
+  the capability flags (`has_shadow`, `has_reflection`, `has_ray_tracing`,
+  `hdr`) honestly report 0 so packs take their fallback paths.
+- Verified against Aurora 5.9.3 (Complementary port): its manifest now parses
+  in compat mode and its 1 400-line sky stage references only `frame` fields
+  we serve — the sky renders; material and the named-buffer post chain are
+  skipped and logged ("compatibility mode" in the pack load line).

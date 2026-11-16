@@ -17,6 +17,11 @@ pub const MAX_PAGES: usize = 32;
 pub const MAX_PAGE_ITEMS: usize = 64;
 /// The most GPU time a pack may declare for itself, in milliseconds.
 pub const MAX_GPU_MS: f32 = 16.0;
+/// What a pack read in compatibility mode (`Manifest::compat`) may carry:
+/// newer API lines chain more post passes and declare more options, so the
+/// caps are wider there; `check` drops what this build can't serve anyway.
+pub const COMPAT_MAX_POST_PASSES: usize = 32;
+pub const COMPAT_MAX_OPTIONS: usize = 256;
 
 /// A checked manifest.
 #[derive(Clone, Debug, PartialEq)]
@@ -41,6 +46,13 @@ pub struct Manifest {
     /// Empty: one page with every option.
     pub pages: Vec<OptionPage>,
     pub budget: Budget,
+    /// True when the manifest was read in compatibility mode: a pack written
+    /// for a newer shader API line (shadow, reflection, vertex or weather
+    /// stages, per-stage file lists, bundled textures). The sections this
+    /// API can't serve are ignored, and a stage or option that doesn't fit
+    /// is dropped instead of refusing the whole pack, so the pack installs
+    /// and renders what it can.
+    pub compat: bool,
     /// WGSL files the pack ships for stages this API line does not draw yet
     /// (`[vertex]`, `[weather]`, `[shadow]`, `[reflection]`, `[[materials]]`,
     /// `[[textures]]`). Carried so the pack installs whole and a newer API can
@@ -253,8 +265,132 @@ fn default_columns() -> u8 {
     2
 }
 
+/// `Raw`, read leniently for a pack written for a newer line of the API:
+/// unknown tables and keys (shadow, reflection, vertex and weather stages,
+/// bundled textures, material tags and whatever comes next) are ignored
+/// rather than refused, and what remains is checked by `parse_compat`.
+#[derive(Deserialize)]
+struct RawCompat {
+    schema: u32,
+    id: String,
+    name: String,
+    version: String,
+    api: String,
+    #[serde(default)]
+    description: String,
+    #[serde(default)]
+    authors: Vec<String>,
+    #[serde(default)]
+    license: Option<String>,
+    #[serde(default)]
+    shared: Vec<String>,
+    #[serde(default)]
+    sky: Option<StageCompat>,
+    #[serde(default)]
+    material: Option<StageCompat>,
+    #[serde(default)]
+    post: Vec<StageCompat>,
+    #[serde(default)]
+    options: Vec<RawOptionCompat>,
+    #[serde(default)]
+    pages: Vec<RawPageCompat>,
+    #[serde(default)]
+    budget: RawBudget,
+}
+
+/// A stage read leniently: newer lines add per-stage flags (a sky that draws
+/// its own clouds, a material that fogs itself) this build ignores, and post
+/// keys (`output`, `scale`, `compute`) that make a pass write a named buffer
+/// this build doesn't carry — `parse_compat` drops such a pass.
+#[derive(Deserialize)]
+struct StageCompat {
+    file: String,
+    #[serde(default)]
+    files: Vec<String>,
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    output: Option<String>,
+    #[serde(default)]
+    scale: Option<f64>,
+    #[serde(default)]
+    compute: Option<bool>,
+}
+
+#[derive(Deserialize)]
+struct RawOptionCompat {
+    id: String,
+    name: String,
+    #[serde(default)]
+    description: String,
+    #[serde(rename = "type")]
+    kind: String,
+    default: toml::Value,
+    #[serde(default)]
+    min: Option<toml::Value>,
+    #[serde(default)]
+    max: Option<toml::Value>,
+    #[serde(default)]
+    step: Option<f64>,
+    #[serde(default)]
+    values: Option<Vec<String>>,
+}
+
+impl RawOptionCompat {
+    fn into_raw(self) -> RawOption {
+        RawOption {
+            id: self.id,
+            name: self.name,
+            description: self.description,
+            kind: self.kind,
+            default: self.default,
+            min: self.min,
+            max: self.max,
+            step: self.step,
+            values: self.values,
+        }
+    }
+}
+
+#[derive(Deserialize)]
+struct RawPageCompat {
+    id: String,
+    name: String,
+    #[serde(default)]
+    description: String,
+    #[serde(default = "default_columns")]
+    columns: u8,
+    #[serde(default)]
+    items: Vec<String>,
+}
+
+impl RawPageCompat {
+    fn into_raw(self) -> RawPage {
+        RawPage {
+            id: self.id,
+            name: self.name,
+            description: self.description,
+            columns: self.columns,
+            items: self.items,
+        }
+    }
+}
+
 impl Manifest {
+    /// Parses a manifest: strictly for a pack within this build's API surface,
+    /// and in compatibility mode (`Manifest::compat`) for one written for a
+    /// newer line of the API, so it still installs and renders what this
+    /// build can serve.
     pub fn parse(text: &str) -> Result<Manifest, String> {
+        match Self::parse_strict(text) {
+            Ok(m) => Ok(m),
+            // Keep the strict error: it names the first thing that didn't
+            // fit, which reads better than a second, looser failure.
+            Err(strict) => Self::parse_compat(text).map_err(|_| strict),
+        }
+    }
+
+    fn parse_strict(text: &str) -> Result<Manifest, String> {
         let raw: Raw = toml::from_str(text).map_err(|e| format!("{MANIFEST}: {e}"))?;
         // Kept as opaque TOML above so third-party `[[lights]]` declarations
         // do not block otherwise-compatible stages. The current shader API
@@ -366,8 +502,114 @@ impl Manifest {
             options,
             pages,
             budget: Budget { gpu_ms },
+            compat: false,
             extra_stages,
             extra_options,
+        })
+    }
+
+    /// Reads a manifest written for a newer line of the shader API. The
+    /// sections this build can't serve (shadow and reflection passes, vertex
+    /// and weather stages, bundled textures, material tags and the rest) are
+    /// ignored; a stage, option or page that doesn't fit is dropped instead
+    /// of refusing the whole pack. `check` then keeps only the stages whose
+    /// WGSL compiles against this build's prelude, so the pack installs and
+    /// renders what it can. The pack's own id, name and version rules still
+    /// hold, and every kept path is still checked.
+    fn parse_compat(text: &str) -> Result<Manifest, String> {
+        let raw: RawCompat = toml::from_str(text).map_err(|e| format!("{MANIFEST}: {e}"))?;
+        let err = |e: String| format!("{MANIFEST}: {e}");
+        if raw.schema != SCHEMA {
+            return Err(err(format!(
+                "schema {}; this Horizon reads {SCHEMA}",
+                raw.schema
+            )));
+        }
+        let id_ok = (1..=64).contains(&raw.id.len())
+            && raw
+                .id
+                .bytes()
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_');
+        if !id_ok {
+            return Err(err(format!("id {:?} is not [a-z0-9_]{{1,64}}", raw.id)));
+        }
+        if raw.name.trim().is_empty() || raw.version.trim().is_empty() {
+            return Err(err("name and version can't be empty".into()));
+        }
+        // A stage is kept when every path it names is a plain .wgsl path and
+        // it writes the pass's own output (a post pass with `output`, `scale`
+        // or `compute` writes a named buffer this build doesn't carry).
+        let keep = |s: &StageCompat, chained: bool| {
+            let paths = s.files.iter().chain(Some(&s.file));
+            (chained || (s.output.is_none() && s.scale.is_none() && s.compute != Some(true)))
+                && paths
+                    .into_iter()
+                    .all(|f| crate::package::plain_path(f) && f.ends_with(".wgsl"))
+        };
+        let stage = |s: StageCompat| Stage {
+            file: s.file,
+            files: s.files,
+            name: s.name,
+        };
+        let sky = raw.sky.filter(|s| keep(s, true)).map(stage);
+        let material = raw.material.filter(|s| keep(s, true)).map(stage);
+        let post: Vec<Stage> = raw
+            .post
+            .into_iter()
+            .filter(|s| keep(s, false))
+            .take(COMPAT_MAX_POST_PASSES)
+            .map(stage)
+            .collect();
+        if sky.is_none() && material.is_none() && post.is_empty() {
+            return Err(err(format!(
+                "written for a newer build of shader API {}; this Horizon serves {API} \
+                 and none of the pack's stages fits it",
+                raw.api
+            )));
+        }
+        let shared: Vec<String> = raw
+            .shared
+            .into_iter()
+            .filter(|f| crate::package::plain_path(f) && f.ends_with(".wgsl"))
+            .collect();
+        // Options the pack declares are kept wherever they fit, so a stage's
+        // `override` constants still get their values; ones that don't are
+        // dropped, not fatal.
+        let mut options: Vec<PackOption> = Vec::new();
+        for o in raw.options.into_iter().take(COMPAT_MAX_OPTIONS) {
+            if let Ok(option) = o.into_raw().check() {
+                if !options.iter().any(|p| p.id == option.id) {
+                    options.push(option);
+                }
+            }
+        }
+        let pages: Vec<RawPage> = raw.pages.into_iter().map(RawPageCompat::into_raw).collect();
+        let pages = check_pages(pages, &options).unwrap_or_default();
+        let gpu_ms = raw
+            .budget
+            .gpu_ms
+            .map(|ms| (ms as f32).clamp(f32::MIN_POSITIVE, MAX_GPU_MS));
+        Ok(Manifest {
+            id: raw.id,
+            name: raw.name,
+            version: raw.version,
+            api: raw.api,
+            description: raw.description,
+            authors: raw.authors,
+            license: raw.license,
+            shared,
+            sky,
+            material,
+            post,
+            options,
+            pages,
+            budget: Budget { gpu_ms },
+            compat: true,
+            // Compatibility mode has already dropped the stages this build
+            // can't serve, and `check`/`package` relax their "used" rules for
+            // a compat pack, so nothing needs carrying here.
+            extra_stages: Vec::new(),
+            extra_options: Vec::new(),
         })
     }
 
