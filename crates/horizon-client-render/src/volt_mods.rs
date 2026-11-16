@@ -1818,19 +1818,26 @@ pub fn apply_mod_to_engine(id: VoltModId, on: bool, extras: &mut Extras, horizon
     }
 }
 
-/// `apply_mod_to_engine` for every mod: the engine flags follow `mod_catalog`.
+/// Pushes the mods the player actually chose into their engine flags.
 ///
 /// The launcher's Mods tab only has the catalog to write (`options.txt`'s
 /// `voltMod.*` keys), while the in-game checks read both the catalog and a
-/// separate engine flag as `flag || catalog.is_on(..)`. With the flags left at
-/// their old value, a mod switched off in the launcher kept working in game -
-/// the reported "turned off in the launcher, still running in game". Running
-/// this right after `options.txt` is read makes the catalog the single
-/// authority, which also covers a hand-edited file.
+/// separate engine flag as `flag || catalog.is_on(..)`. With the flag left at
+/// its old value, a mod switched off in the launcher kept working in game -
+/// the reported "turned off in the launcher, still running in game".
+///
+/// Only mods whose catalog entry differs from its default are applied. A mod
+/// nobody has touched keeps the engine flag it already had, so a default of
+/// `true` in the catalog cannot silently switch on a renderer feature that
+/// ships off (`Graphics::default().entity_culling` is `false` while
+/// EntityCulling defaults on). `Extras` only writes the non-default keys, so
+/// "differs from its default" is exactly "the player set it".
 pub fn apply_engine_from_catalog(extras: &mut Extras, horizon: &mut Graphics) {
     for id in VoltModId::ALL {
         let on = extras.mod_catalog.is_on(id);
-        apply_mod_to_engine(id, on, extras, horizon);
+        if on != id.meta().default_on {
+            apply_mod_to_engine(id, on, extras, horizon);
+        }
     }
 }
 
