@@ -1,0 +1,128 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 260" width="900" height="260" role="img" aria-label="Volt Launcher: play, mod, shade, go">
+  <title>Volt Launcher</title>
+  <desc>An animated banner: a lightning strike powers up a glowing V, and the words Play, Mod, Shade and Go cycle underneath.</desc>
+
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#0a0a0d"/>
+      <stop offset="1" stop-color="#15161c"/>
+    </linearGradient>
+
+    <linearGradient id="vface" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#c9cbd2"/>
+    </linearGradient>
+
+    <linearGradient id="sheen" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0"/>
+      <stop offset="0.45" stop-color="#ffffff" stop-opacity="0.85"/>
+      <stop offset="0.55" stop-color="#ffffff" stop-opacity="0.85"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+
+    <linearGradient id="bolt" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ff6b6b"/>
+      <stop offset="0.5" stop-color="#ff2d2d"/>
+      <stop offset="1" stop-color="#b00000"/>
+    </linearGradient>
+
+    <filter id="glow" x="-60%" y="-60%" width="220%" height="220%">
+      <feGaussianBlur stdDeviation="7" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+
+    <filter id="softglow" x="-80%" y="-80%" width="260%" height="260%">
+      <feGaussianBlur stdDeviation="16"/>
+    </filter>
+
+    <clipPath id="vclip">
+      <path d="M300 40 L352 40 L400 150 L448 40 L500 40 L432 220 L368 220 Z"/>
+    </clipPath>
+
+    <pattern id="grid" width="34" height="34" patternUnits="userSpaceOnUse">
+      <path d="M34 0 L0 0 0 34" fill="none" stroke="#ffffff" stroke-opacity="0.045" stroke-width="1"/>
+    </pattern>
+  </defs>
+
+  <!-- Backdrop -->
+  <rect width="900" height="260" fill="url(#bg)"/>
+  <rect width="900" height="260" fill="url(#grid)"/>
+
+  <!-- Pulsing aura behind the V -->
+  <ellipse cx="400" cy="130" rx="140" ry="105" fill="#ff2d2d" opacity="0.16" filter="url(#softglow)">
+    <animate attributeName="opacity" values="0.10;0.26;0.10" dur="3.2s" repeatCount="indefinite"/>
+    <animate attributeName="rx" values="132;152;132" dur="3.2s" repeatCount="indefinite"/>
+  </ellipse>
+
+  <!-- Lightning bolt that strikes, repeatedly -->
+  <g filter="url(#glow)">
+    <polygon points="418,-10 396,96 414,96 388,196 448,78 424,78 450,-10" fill="url(#bolt)">
+      <animate attributeName="opacity" values="0;0;1;0.15;0.9;0;0;0;0;0" dur="4.6s" repeatCount="indefinite" keyTimes="0;0.44;0.47;0.50;0.53;0.57;0.60;0.9;0.95;1"/>
+    </polygon>
+  </g>
+
+  <!-- Rings that spread out on each strike -->
+  <g fill="none" stroke="#ff2d2d" stroke-width="2">
+    <circle cx="400" cy="128" r="20" opacity="0">
+      <animate attributeName="r" values="20;150" dur="4.6s" begin="0s" repeatCount="indefinite"/>
+      <animate attributeName="opacity" values="0;0;0.65;0;0;0" dur="4.6s" begin="0s" repeatCount="indefinite"/>
+    </circle>
+    <circle cx="400" cy="128" r="20" opacity="0">
+      <animate attributeName="r" values="20;150" dur="4.6s" begin="0.22s" repeatCount="indefinite"/>
+      <animate attributeName="opacity" values="0;0;0.4;0;0;0" dur="4.6s" begin="0.22s" repeatCount="indefinite"/>
+    </circle>
+  </g>
+
+  <!-- The V mark -->
+  <g>
+    <path d="M300 40 L352 40 L400 150 L448 40 L500 40 L432 220 L368 220 Z"
+          fill="url(#vface)" stroke="#1a1b21" stroke-width="6" stroke-linejoin="round"/>
+    <!-- Inner bevel -->
+    <path d="M318 58 L344 58 L396 176 L400 176 L452 58 L478 58 L420 202 L380 202 Z"
+          fill="none" stroke="#202128" stroke-opacity="0.55" stroke-width="3" stroke-linejoin="round"/>
+    <!-- Moving sheen -->
+    <rect x="270" y="0" width="90" height="260" fill="url(#sheen)" clip-path="url(#vclip)" opacity="0.75">
+      <animate attributeName="x" values="250;520;520" dur="3.6s" repeatCount="indefinite" keyTimes="0;0.75;1"/>
+    </rect>
+    <!-- Charge-up brightness on each strike -->
+    <path d="M300 40 L352 40 L400 150 L448 40 L500 40 L432 220 L368 220 Z"
+          fill="#fff" opacity="0" clip-path="url(#vclip)">
+      <animate attributeName="opacity" values="0;0;0.55;0;0;0" dur="4.6s" repeatCount="indefinite" keyTimes="0;0.44;0.48;0.62;0.9;1"/>
+    </path>
+  </g>
+
+  <!-- Wordmark -->
+  <text x="560" y="118" font-family="Verdana, DejaVu Sans, sans-serif" font-size="47" font-weight="bold" fill="#ffffff" letter-spacing="2">VOLT</text>
+  <text x="560" y="160" font-family="Verdana, DejaVu Sans, sans-serif" font-size="27" font-weight="bold" fill="#ff2d2d" letter-spacing="8">LAUNCHER</text>
+
+  <!-- Cycling tagline -->
+  <g font-family="Verdana, DejaVu Sans, sans-serif" font-size="17" fill="#8e93a3" letter-spacing="1">
+    <text x="562" y="205" opacity="1">
+      PLAY
+      <animate attributeName="opacity" values="1;1;0;0;0;0;0;1" dur="12s" repeatCount="indefinite" keyTimes="0;0.18;0.24;0.4;0.55;0.7;0.9;1"/>
+    </text>
+    <text x="562" y="205" opacity="0">
+      MOD
+      <animate attributeName="opacity" values="0;0;1;1;0;0;0;0" dur="12s" repeatCount="indefinite" keyTimes="0;0.2;0.26;0.4;0.46;0.6;0.9;1"/>
+    </text>
+    <text x="562" y="205" opacity="0">
+      SHADE
+      <animate attributeName="opacity" values="0;0;0;0;1;1;0;0" dur="12s" repeatCount="indefinite" keyTimes="0;0.2;0.3;0.42;0.48;0.62;0.68;1"/>
+    </text>
+    <text x="562" y="205" opacity="0">
+      GO
+      <animate attributeName="opacity" values="0;0;0;0;0;0;1;1" dur="12s" repeatCount="indefinite" keyTimes="0;0.2;0.3;0.5;0.6;0.66;0.72;0.88"/>
+    </text>
+  </g>
+
+  <!-- Corner ticks -->
+  <g stroke="#ff2d2d" stroke-width="3" stroke-linecap="round" opacity="0.75">
+    <path d="M24 42 L24 24 L42 24"/>
+    <path d="M876 42 L876 24 L858 24"/>
+    <path d="M24 218 L24 236 L42 236"/>
+    <path d="M876 218 L876 236 L858 236"/>
+  </g>
+</svg>
