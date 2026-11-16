@@ -20068,7 +20068,16 @@ pub fn run() -> Result<()> {
             log::warn!("could not add the official server to servers.dat: {e}");
         }
     }
-    let early_settings = Settings::load(&std::env::current_dir()?.join("options.txt"));
+    let mut early_settings = Settings::load(&std::env::current_dir()?.join("options.txt"));
+    // The launcher's Mods tab writes `voltMod.<slug>` to `options.txt` and the
+    // switches to `horizon-mods.txt`; the engine flags those mods read were
+    // only ever written by the in-game page. Make the catalog it just wrote the
+    // authority once at load, so a mod switched off in the launcher is off in
+    // game too instead of running from a stale engine flag.
+    horizon_client::volt_mods::apply_engine_from_catalog(
+        &mut early_settings.extras,
+        &mut early_settings.horizon,
+    );
     // "Playing Horizon" on Discord: never for a server; an automated run only talks to a test's fake Discord.
     if options.dedicated.is_none() {
         let automated = options.benchmark.is_some()

@@ -343,6 +343,12 @@ impl ReplayUi {
 /// before an i32 overflow, and stable for removal.
 pub(super) const REPLAY_BODY_ID: i32 = i32::MAX - 100;
 
+/// Lines kept of what a server did while a player joined. A captcha plugin's
+/// signature (a teleport to a check area, a screen, a command tree, a
+/// respawn) is a handful of events, and the whole set is what goes on the
+/// Connection Lost screen when it kicks them.
+pub(super) const JOIN_TRACE_MAX: usize = 12;
+
 pub(super) struct Remote {
     pub session: Session,
     pub brand: String,
@@ -537,8 +543,9 @@ pub(super) struct Remote {
     /// What the server sent in the first seconds of this join, for the
     /// "Captcha Failed" class of kicks: a plugin that teleports the player to
     /// a check area, opens a screen, or takes commands away leaves a trace
-    /// here. Printed to the log and shown once in chat when `captcha_trace`
-    /// is on, so a player can read it on the phone and report it.
+    /// here. Logged as it happens, shown in chat once it fills, and put on
+    /// the Connection Lost screen when the server kicks the player mid-join,
+    /// so a phone user can read it without a log viewer and report it.
     pub(super) join_trace: Vec<String>,
     /// A SkinsRestorer-style `/skin` sync waiting for the player to act.
     /// Cracked servers gate every command behind their auth plugins
@@ -977,6 +984,17 @@ impl Game<'_> {
         if reason.is_none() && self.integrated.as_ref().is_some_and(|s| !s.stopped()) {
             return self.begin_closing_save(false);
         }
+        // A kick while the player is still joining ("Captcha Failed" and the
+        // like) is the one case where what the server did in those seconds is
+        // the whole diagnosis, and a phone has no log viewer. Put the trace on
+        // the Connection Lost screen itself, where it can be read and sent.
+        let reason = match (reason, self.remote.as_ref()) {
+            (Some(reason), Some(r)) if !r.join_trace.is_empty() => Some(format!(
+                "{reason}\n\nWhat the server did as you joined: {}",
+                r.join_trace.join(" · ")
+            )),
+            (reason, _) => reason,
+        };
         // Volt Replay: stop capturing before the session (and with it the
         // MP4 exporter, which finalizes its file on drop) goes away.
         if let Some(renderer) = self.renderer.as_mut() {
@@ -2802,7 +2820,7 @@ impl Game<'_> {
             if r.join_trace.iter().any(|seen| *seen == event) {
                 return;
             }
-            if r.join_trace.len() >= 8 {
+            if r.join_trace.len() >= JOIN_TRACE_MAX {
                 return;
             }
         }
@@ -2812,7 +2830,7 @@ impl Game<'_> {
         let ready = match self.remote.as_mut() {
             Some(r) => {
                 r.join_trace.push(event);
-                (r.join_trace.len() == 8).then(|| r.join_trace.join(" · "))
+                (r.join_trace.len() == JOIN_TRACE_MAX).then(|| r.join_trace.join(" · "))
             }
             None => None,
         };
@@ -2858,6 +2876,13 @@ impl Game<'_> {
                 self.debug_charts.ping.log(delay);
             }
             C::Login(p) => {
+                // The join reached play: anything after this is the server's
+                // own gate (a captcha plugin's check area) rather than the
+                // connection still starting up.
+                self.trace_join(format!(
+                    "joined: eid {}, {}, view {}, game type {}",
+                    p.player_id, p.spawn.dimension, p.chunk_radius, p.spawn.game_type
+                ));
                 self.test_highlights.clear();
                 self.level.hardcore = p.hardcore;
                 // handleLogin: startWaitingForNewLevel with Reason.OTHER, which

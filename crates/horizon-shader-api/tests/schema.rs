@@ -116,6 +116,86 @@ fn a_stage_ignores_keys_this_build_does_not_read() {
     assert_eq!(m.post[0].file, "a.wgsl");
 }
 
+/// A registry pack declares stages this API line does not draw yet
+/// (`[vertex]`, `[weather]`, `[shadow]`, `[reflection]`, `[[materials]]`).
+/// Refusing them made every published pack uninstallable with
+/// "unknown field `vertex`", so no shader could be downloaded at all.
+#[test]
+fn stages_this_api_does_not_draw_are_carried_not_refused() {
+    let text = sample_text();
+    let text = format!(
+        "{text}
+\
+         [vertex]\nfile = \"vertex.wgsl\"\n\n\
+         [weather]\nfile = \"weather.wgsl\"\n\n\
+         [shadow]\nresolution = 2048\ndistance = 128.0\nsolid_materials = [4]\n\n\
+         [reflection]\noption = \"reflections\"\n\n\
+         [[materials]]\nid = 4\nfile = \"material_4.wgsl\"\n"
+    );
+    let m = Manifest::parse(&text).expect("a published pack's stages are not an error");
+    for file in ["vertex.wgsl", "weather.wgsl", "material_4.wgsl"] {
+        assert!(
+            m.extra_stages.iter().any(|f| f == file),
+            "{file} should be carried"
+        );
+    }
+    // Their files count as used, so the pack is not refused as shipping
+    // files nothing names.
+    for file in ["vertex.wgsl", "weather.wgsl", "material_4.wgsl"] {
+        assert!(m.files().contains(&file), "{file} should count as used");
+    }
+    assert_eq!(m.sky.as_ref().unwrap().file, "sky.wgsl");
+}
+
+/// A stage may name more WGSL beside its `file` (`files = [...]`), which is
+/// how Daybreak, Volexstorm, Pastel Mystic and Wisdom Horizon keep their
+/// lighting, water and bloom passes. Without reading the key the pack was
+/// refused as shipping files "not used by any stage or in shared".
+#[test]
+fn a_stage_can_name_more_files_beside_its_own() {
+    let text = "schema = 1\nid = \"p\"\nname = \"P\"\nversion = \"1\"\napi = \"0.1\"\n\
+                [sky]\nfile = \"sky.wgsl\"\n\
+                [material]\nfile = \"material.wgsl\"\nfiles = [\"lighting.wgsl\", \"water.wgsl\"]\n";
+    let m = Manifest::parse(&text).expect("a multi file stage is valid");
+    let material = m.material.as_ref().unwrap();
+    assert_eq!(material.files, ["lighting.wgsl", "water.wgsl"]);
+    for file in ["lighting.wgsl", "water.wgsl"] {
+        assert!(m.files().contains(&file), "{file} should count as used");
+    }
+}
+
+/// `[shadow]` and `[reflection]` name the options that drive them, and their
+/// `override` lives in a stage this API line does not compile. Those options
+/// must still count as used, or every shadowed pack failed its check with
+/// "option `shadow_resolution`: no stage declares" and could not install.
+#[test]
+fn shadow_and_reflection_options_count_as_used() {
+    let text = "schema = 1\nid = \"p\"\nname = \"P\"\nversion = \"1\"\napi = \"0.1\"\n\
+                [sky]\nfile = \"sky.wgsl\"\n\
+                [shadow]\nresolution = 2048\ndistance = 96.0\noption = \"shadows\"\n\
+                resolution_option = \"shadow_resolution\"\ndistance_option = \"shadow_distance\"\n\
+                [reflection]\noption = \"reflections\"\n";
+    let m = Manifest::parse(&text).expect("a shadow table is valid");
+    for option in ["shadows", "shadow_resolution", "shadow_distance", "reflections"] {
+        assert!(
+            m.extra_options.iter().any(|o| o == option),
+            "{option} should count as used"
+        );
+    }
+}
+
+/// An unknown top-level key is ignored, not refused: a published pack declares
+/// `[vertex]`, `[textures]` and friends, and refusing unknown keys made every
+/// one of them uninstallable. A misspelled `licence` is metadata quietly
+/// dropped, which is the price of reading packs written for a newer API.
+#[test]
+fn an_unknown_top_level_key_is_ignored() {
+    let text = sample_text().replace("license = \"MIT\"", "licence = \"MIT\"");
+    let m = Manifest::parse(&text).expect("unknown keys are metadata, not an error");
+    assert!(m.license.is_none());
+    assert_eq!(m.id, "sample_pack");
+}
+
 #[test]
 fn the_smallest_manifest() {
     let m = Manifest::parse(
@@ -137,10 +217,6 @@ fn refuses_what_this_build_does_not_read() {
         (
             text.replace("\"sample_pack\"", "\"Sample\""),
             "is not [a-z0-9_]",
-        ),
-        (
-            text.replace("license = \"MIT\"", "licence = \"MIT\""),
-            "unknown field",
         ),
         (
             text.replace("gpu_ms = 1.5", "gpu_ms = 40.0"),
@@ -260,5 +336,33 @@ fn refuses_files_a_pack_does_not_use() {
         Pack::from_files(files)
             .unwrap_err()
             .contains("missing at the pack's root")
+    );
+}
+
+/// Published packs sample their own images through `[[textures]]`. The
+/// package reader used to allow only a fixed list of extras, so a pack that
+/// shipped `textures/noise.png` was refused with "a pack holds only
+/// horizon-shaders.toml, .wgsl files and ...", and the download failed.
+#[test]
+fn texture_images_a_manifest_names_are_allowed() {
+    let base = || -> BTreeMap<String, Vec<u8>> { Pack::read(sample_dir()).unwrap().files };
+    let mut files = base();
+    let text = String::from_utf8(files.remove(MANIFEST).unwrap()).unwrap();
+    files.insert(
+        MANIFEST.into(),
+        format!("{text}\n[[textures]]\nid = \"noise\"\nfile = \"textures/noise.png\"\n")
+            .into_bytes(),
+    );
+    files.insert("textures/noise.png".into(), vec![0x89, b'P', b'N', b'G']);
+    let pack = Pack::from_files(files).expect("a named texture installs");
+    assert!(pack.files.contains_key("textures/noise.png"));
+
+    // Still no hole: an image the manifest does not name is refused.
+    let mut files = base();
+    files.insert("textures/sneaky.png".into(), vec![1, 2, 3]);
+    assert!(
+        Pack::from_files(files)
+            .unwrap_err()
+            .contains("textures/sneaky.png: a pack holds only")
     );
 }
