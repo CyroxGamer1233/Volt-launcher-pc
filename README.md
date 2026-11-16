@@ -102,51 +102,7 @@ Once Play is pressed, this is the client Volt runs. Captured on a POCO M8 Pro ·
 | --- | --- |
 | ![Snowy landscape on Android](docs/media/android/snow-landscape.png) | ![Hypixel Arcade lobby on Android](docs/media/android/hypixel-arcade.png) |
 
-| **Third-person view** | **Desert terrain** |
-| --- | --- |
-| ![Steve on Android with third-person camera, touch controls and FPS overlay](docs/media/android/third-person-desert.png) | ![Desert terrain on Android with touch controls and FPS overlay](docs/media/android/desert-panorama.png) |
 
-### Hypixel Arcade gameplay
-
-https://youtu.be/gWK01tGlyFI
-
-*Disasters gameplay recorded on Poco M8 Pro. FPS readings in the footage are not a controlled benchmark.*
-
-### On a flip phone
-
-Fujitsu F-03L · Portrait mode
-
-| **Main menu** | **In-game** |
-| --- | --- |
-| <img src="docs/media/android/fujitsu-f03l-menu.png" alt="Horizon main menu on a Fujitsu F-03L flip phone in portrait mode" width="220"> | <img src="docs/media/android/fujitsu-f03l-gameplay.png" alt="Minecraft world running on a Fujitsu F-03L flip phone in portrait mode" width="220"> |
-
-## Help build it
-
-Try a developer build, send a reproducible bug report, or contribute a focused
-pull request against `android`. Touch input, accessibility, hardware controllers,
-Android lifecycle and real-phone profiling are useful areas to help.
-[Start here](CONTRIBUTING_ANDROID.md).
-
-If the port is useful to you, **star the repository** so other players and
-contributors can find it.
-
-## Builds and source
-
-[Build instructions](docs/android.md#build-developers-only) explain the SDK/NDK
-setup and preparation for building the engine. The Android distribution APK
-contains generated Horizon tables; it downloads original Minecraft resources and
-sound from Mojang and the touch textures from Mojang's official sample repository.
-No PC resource preparation is needed to install and play on the phone.
-[Publication notes](docs/android-publication.md).
-
-This branch preserves upstream authorship and history. [Upstream integration](docs/android-upstream.json)
-records reviewed merges. Original deployment workflows remain disabled in this fork.
-
-Original copyright and third-party notices are retained in [LICENSE](LICENSE)
-and [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). Mojang textures are not
-licensed under Horizon's MIT license. Game files, prepared resources, accounts,
-APKs and signing keys stay outside Git. This project is not affiliated with or
-endorsed by Mojang or Microsoft.
 
 ---
 
