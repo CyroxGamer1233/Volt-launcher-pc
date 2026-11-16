@@ -332,6 +332,14 @@ pub struct Catalog {
     pub downloading: Option<(browser::SourceId, String)>,
     progress: Arc<Mutex<f32>>,
     pub failed: Option<(browser::SourceId, String)>,
+    /// Why the last download of a given project failed, and for how long that
+    /// message belongs to that project. Install failures used to live only in
+    /// `status`, so the detail page showed nothing on its Download tab and a
+    /// failed shader looked like a button that silently did nothing.
+    pub failed_message: Option<(browser::SourceId, String, String)>,
+    /// When the running job started; lets a stalled download say so instead of
+    /// spinning forever.
+    job_started: Option<std::time::Instant>,
     pub page: Page,
     pub query: String,
     pub results: Vec<Project>,
@@ -426,6 +434,8 @@ impl Catalog {
             downloading: None,
             progress: Arc::new(Mutex::new(0.0)),
             failed: None,
+            failed_message: None,
+            job_started: None,
             page: Page::Play,
             query: String::new(),
             results: vec![],
@@ -608,6 +618,12 @@ impl Catalog {
     pub fn busy(&self) -> bool {
         self.worker.is_some()
     }
+    /// Record a failure against the project that caused it, so its own card
+    /// and detail page can explain what happened.
+    fn note_failure(&mut self, project: &Project, why: &str) {
+        self.failed = Some((project.source, project.id.clone()));
+        self.failed_message = Some((project.source, project.id.clone(), why.to_owned()));
+    }
     pub fn download_label(&self, project: &Project) -> Option<String> {
         if self
             .downloading
@@ -652,6 +668,7 @@ impl Catalog {
             return;
         }
         self.status = status.into();
+        self.job_started = Some(std::time::Instant::now());
         let (tx, rx) = mpsc::channel();
         self.worker = Some(rx);
         if let Err(err) = std::thread::Builder::new()
@@ -674,8 +691,29 @@ impl Catalog {
             })
         {
             self.worker = None;
+            self.job_started = None;
             self.status = format!("Could not start launcher worker: {err}");
+            self.failed = self.downloading.take();
         }
+    }
+
+    /// Why this project's last download failed, if that is still the last
+    /// thing that happened to it. Scoped by project so a failure on one shader
+    /// cannot paint an error banner over every other card.
+    pub fn failure_for(&self, project: &Project) -> Option<&str> {
+        let (source, id, message) = self.failed_message.as_ref()?;
+        (*source == project.source && id == &project.id).then_some(message.as_str())
+    }
+
+    /// The running job's progress, 0..1, for the Download tab's percentage.
+    pub fn progress(&self) -> f32 {
+        *self.progress.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// True when a job has been running long enough that the UI should say it
+    /// is still alive instead of showing an unchanging "Downloading…".
+    pub fn job_is_stalled(&self, after: std::time::Duration) -> bool {
+        self.job_started.is_some_and(|start| start.elapsed() > after)
     }
     pub fn poll(&mut self, home: &Path) {
         let reply = self.worker.as_ref().and_then(|rx| match rx.try_recv() {
@@ -685,13 +723,18 @@ impl Catalog {
         });
         if let Some(reply) = reply {
             self.worker = None;
+            self.job_started = None;
             let downloading = self.downloading.take();
-            if reply.is_err() {
-                self.failed = downloading;
+            if let Err(error) = &reply {
+                self.failed = downloading.clone();
+                if let Some((source, id)) = downloading {
+                    self.failed_message = Some((source, id, error.clone()));
+                }
             }
             match reply {
                 Ok(Reply::Done(s, kind)) => {
                     self.status = s;
+                    self.failed_message = None;
                     self.show_installed(Some(kind));
                 }
                 Ok(Reply::NativeSource(s)) => self.status = s,
@@ -1092,9 +1135,15 @@ impl Catalog {
     }
     pub fn install(&mut self, home: &Path, index: usize) {
         let Some(project) = self.results.get(index).cloned() else {
+            self.status = "That item is no longer in this list: go back and reopen it.".into();
             return;
         };
         if self.busy() || self.download_label(&project).is_some() {
+            // A second tap while another job runs used to do nothing at all.
+            if self.download_label(&project).is_none() {
+                self.status = "Another download is still running; wait for it to finish.".into();
+                self.note_failure(&project, "Another download is still running.");
+            }
             return;
         }
         let game = self.config.game_home(home);
@@ -1132,10 +1181,18 @@ impl Catalog {
                 && project.kind == Kind::Mod
                 && project.source == browser::SourceId::Horizon)
         {
+            let why = match project.kind {
+                Kind::Shader => "This shader cannot be installed on this build. Use the Horizon source or a Modrinth/CurseForge ZIP.",
+                Kind::Mod => "Java mods cannot run on Android; only native .hmod mods install here.",
+                _ => "This item cannot be installed on this build.",
+            };
+            self.status = format!("{}: {why}", project.title);
+            self.note_failure(&project, why);
             return;
         }
         self.downloading = Some((project.source, project.id.clone()));
         self.failed = None;
+        self.failed_message = None;
         *self.progress.lock().unwrap_or_else(|e| e.into_inner()) = 0.0;
         let progress = self.progress.clone();
         let status = if project.kind == Kind::Shader

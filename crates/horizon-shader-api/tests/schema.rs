@@ -102,6 +102,20 @@ fn third_party_lights_metadata_does_not_block_supported_shader_stages() {
     assert!(!manifest.files().contains(&"lights.wgsl"));
 }
 
+/// Registry packs carry metadata keys this reader does not use. Refusing them
+/// made published shader packs impossible to download at all: one port writes
+/// `fog = false` inside its `[[post]]` blocks, and every attempt failed with
+/// "unknown field `fog`, expected `file` or `name`". Unknown stage keys are
+/// ignored, exactly as vanilla ignores keys it does not know in a pack.
+#[test]
+fn a_stage_ignores_keys_this_build_does_not_read() {
+    let text = "schema = 1\nid = \"p\"\nname = \"P\"\nversion = \"1\"\napi = \"0.1\"\n\
+                [[post]]\nfile = \"a.wgsl\"\nfog = false\nbloom = 0.4\n";
+    let m = Manifest::parse(text).expect("extra stage keys are metadata, not an error");
+    assert_eq!(m.post.len(), 1);
+    assert_eq!(m.post[0].file, "a.wgsl");
+}
+
 #[test]
 fn the_smallest_manifest() {
     let m = Manifest::parse(

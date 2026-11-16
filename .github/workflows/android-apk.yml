@@ -97,7 +97,12 @@ jobs:
               raise SystemExit(f"Unsupported ABI(s): {unknown}")
 
           include = [{"abi": abi, "target": targets[abi]} for abi in selected]
-          publish_release = ref.startswith("refs/tags/v") or (event == "workflow_dispatch" and input_publish)
+          # Session branches publish nothing: only `android`, `v*` tags and an
+          # explicit dispatch may refresh the rolling `debug` release. The
+          # release job deploys rolling debug builds only and never marks them
+          # pre-release, so players never see a pre-release channel.
+          is_android = ref == "refs/heads/android"
+          publish_release = is_android or ref.startswith("refs/tags/v") or (event == "workflow_dispatch" and input_publish)
 
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as out:
               out.write(f"matrix={json.dumps({'include': include})}\n")
