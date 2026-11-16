@@ -21,6 +21,10 @@ with framed items.
 
 ### New
 
+- **Horizontal and Vertical sensitivity** in Volt Settings → Controls. Each
+  slider moves the camera on its own axis only, from 10% to 300%, so you can
+  turn fast sideways while keeping vertical aim steady, or the other way round.
+  The combined Touch Sensitivity still scales both at once.
 - **Frame Items Loader** in Volt Boost. Item frames and glow item frames are
   normally drawn only within about 1024 blocks and only when they are in view.
   With this on, framed items are drawn from any distance and from any angle,
@@ -33,6 +37,10 @@ with framed items.
 
 - Freelook and Frame Items Loader are both off until you switch them on, so an
   existing install behaves exactly as before after updating.
+- **Menus no longer clamp to 60 FPS.** Every GUI used to be capped at 60 no
+  matter what Max Framerate said, which is why turning Dynamic FPS off changed
+  nothing in menus. A menu now honours your setting up to 60, so 30 stays 30 and
+  120 stays 120. The idle cap for unattended menus still applies.
 - Frame Items Loader draws every loaded frame in the world. On a server with
   thousands of frames spread over a long distance, expect the frames to cost
   GPU time in proportion to how many you have placed.

@@ -1143,6 +1143,36 @@ mod tests {
         }
     }
 
+    /// Each axis slider scales only its own axis, and a higher number turns
+    /// further for the same finger movement.
+    #[test]
+    fn axis_sensitivity_scales_its_own_axis_only() {
+        let (w, h) = (2400, 1080);
+        let drag = [100.0 / w as f32, 100.0 / h as f32];
+        let mut settings = Settings::default();
+        let base = camera_delta(drag, w, h, &settings);
+
+        settings.sensitivity_horizontal = 2.0;
+        let wide = camera_delta(drag, w, h, &settings);
+        assert!((wide[0] - base[0] * 2.0).abs() < 0.0001, "horizontal doubles");
+        assert!((wide[1] - base[1]).abs() < 0.0001, "vertical untouched");
+        settings.sensitivity_horizontal = 1.0;
+
+        settings.sensitivity_vertical = 2.0;
+        let tall = camera_delta(drag, w, h, &settings);
+        assert!((tall[1] - base[1] * 2.0).abs() < 0.0001, "vertical doubles");
+        assert!((tall[0] - base[0]).abs() < 0.0001, "horizontal untouched");
+        settings.sensitivity_vertical = 1.0;
+
+        // The lowest setting must still move the camera, and less than the
+        // highest one does for the same drag.
+        settings.sensitivity_horizontal = 0.1;
+        settings.sensitivity_vertical = 0.1;
+        let slow = camera_delta(drag, w, h, &settings);
+        assert!(slow[0] > 0.0 && slow[1] > 0.0, "never a dead slider");
+        assert!(slow[0] < base[0] && slow[1] < base[1]);
+    }
+
     #[test]
     fn surface_tools_tap_but_projectiles_keep_hold_use_and_center_aim() {
         for id in [

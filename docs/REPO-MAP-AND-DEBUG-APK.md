@@ -326,3 +326,23 @@ control). `last_sneak_tap` is gone.
 and the frustum test in `frames.rs` for item frames only. Off by default and
 deliberately excluded from `apply_volt_preset`: it draws more than vanilla, so
 a Boost profile must not switch it on.
+
+## Volt 1.1.0 follow-up — axis sensitivity, GUI framerate
+
+**Horizontal and Vertical sensitivity are now on Volt Settings → Controls.**
+`Opt::TouchSensitivityHorizontal`/`Vertical` already existed and already scaled
+each axis on its own in `camera_delta` (`sensitivity * sensitivity_horizontal` on
+x, `* sensitivity_vertical` on y), but the Volt Controls page only listed the
+combined `TouchSensitivity`, so the per-axis controls were unreachable there.
+Both are 10%–300%, applied continuously by `set_slider`, and the new
+`axis_sensitivity_scales_its_own_axis_only` test pins that each one moves only
+its own axis and that the lowest setting still turns the camera.
+
+**Menus no longer clamp to a flat 60 FPS.** `framerate_limit` returned a literal
+`60` for `ThrottleReason::OutOfLevelMenu`, so a screen opened over gameplay, or
+any GUI at the title, ignored Max Framerate: setting 90 or 120 still showed 60
+in every menu. It is now `option_limit.min(60)`, so a player who chose 30 keeps
+30, and one who chose 120 keeps 120 in menus. This is what "it still lowers FPS
+in all GUIs" was: not the Dynamic FPS mod, which only engages after 35 s without
+input or when unfocused. The Volt idle-menu cap (after 10 s idle) also skips the
+hidden-HUD state now, since hiding the HUD is not a menu.
