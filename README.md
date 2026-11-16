@@ -129,9 +129,26 @@ compatibility requires testing on the actual server.
 | :---: | :---: |
 | [<img src="docs/media/volt/launcher-1.png" alt="Volt Launcher home screen: Play button, instance, renderer and Volt Boost settings">](docs/media/volt/launcher-1.png)<br><sub><b>Home</b> — Play, instance and renderer at a glance</sub> | [<img src="docs/media/volt/launcher-5.png" alt="Volt Launcher home screen with the instance panel">](docs/media/volt/launcher-5.png)<br><sub><b>Home</b> — the instance panel</sub> |
 | [<img src="docs/media/volt/launcher-2.png" alt="Volt Launcher Mods page listing Horizon Zoom, FPS Overlay, Keystrokes, Minimap, JEI and Horizon Physics">](docs/media/volt/launcher-2.png)<br><sub><b>Mods</b> — install or switch off per profile</sub> | [<img src="docs/media/volt/launcher-6.png" alt="Volt Launcher Mods page showing which official mods are built into the APK">](docs/media/volt/launcher-6.png)<br><sub><b>Mods</b> — what is built into the APK</sub> |
-| [<img src="docs/media/volt/launcher-3.png" alt="Volt Launcher Resource Packs page searching Modrinth and CurseForge">](docs/media/volt/launcher-3.png)<br><sub><b>Resource Packs</b> — Modrinth and CurseForge, one search</sub> | [<img src="docs/media/volt/launcher-4.png" alt="Volt Launcher Choose profile dialog with Profile 0, Profile 1 and Create profile">](docs/media/volt/launcher-4.png)<br><sub><b>Profiles</b> — separate saves, mods and packs</sub> |
+
+[<img src="docs/media/volt/launcher-4.png" alt="Volt Launcher Choose profile dialog with Profile 0, Profile 1 and Create profile">](docs/media/volt/launcher-4.png)
+
+<sub><b>Profiles</b> — separate saves, mods and packs</sub>
 
 </div>
+
+---
+
+<sub>
+
+**Volt Launcher is unofficial.** It is not affiliated with, endorsed by or
+approved by Mojang or Microsoft. It contains no Minecraft code or assets: you
+need your own copy of Java Edition. Mojang textures are covered by the
+[Minecraft EULA](https://www.minecraft.net/en-us/eula), not by this project's
+licence; original work is [MIT](LICENSE) and dependencies keep their own terms
+([notices](THIRD_PARTY_NOTICES.md)). Game files, prepared resources, accounts,
+APKs and signing keys stay outside Git.
+
+</sub>
 
 <details>
 <summary>Upstream Horizon documentation (desktop)</summary>
