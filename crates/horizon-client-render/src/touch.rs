@@ -1692,11 +1692,10 @@ mod tests {
         t.update(1, [0.20, 0.76], false, false);
         assert_eq!(t.state().left, [1.0, 0.0]);
         t.clear();
+        // One tap crouches: the D-pad sneak used to need a second one.
         t.update(10, [0.13, 0.76], true, false);
-        assert!(!t.poll_state().held(Button::RightStick));
-        t.update(10, [0.13, 0.76], false, true);
-        t.update(12, [0.13, 0.76], true, false);
         assert!(t.poll_state().held(Button::RightStick));
+        t.update(10, [0.13, 0.76], false, true);
         t.clear();
         t.settings.swap_jump_sneak = true;
         t.update(11, [0.13, 0.76], true, false);
@@ -1740,16 +1739,19 @@ mod tests {
             );
         }
     }
-    /// Flying and swimming reuse the sneak button as a held descend control,
-    /// so it must not latch as a toggle there.
+    /// Flying and swimming reuse the sneak button as a held descend control:
+    /// it is down while the finger is, and releases with it instead of
+    /// latching like the crouch toggle.
     #[test]
-    fn sneak_does_not_toggle_while_flying_or_swimming() {
+    fn sneak_is_held_while_flying_or_swimming() {
         for (vertical, swim) in [(true, false), (false, true)] {
             let mut t = TouchControls::default();
             t.vertical_movement = vertical;
             t.swimming = swim;
             let center = t.placement(Control::Sneak).center;
             t.update(1, center, true, false);
+            assert!(t.state().held(Button::RightStick));
+            t.update(1, center, false, true);
             assert!(!t.state().held(Button::RightStick));
         }
     }
