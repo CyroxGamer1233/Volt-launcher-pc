@@ -119,6 +119,7 @@ pub const STUDIO_BINDINGS: &[(&str, &str)] = &[
     ("key.keyboard.tab", "Player List (Tab)"),
     ("key.keyboard.f3", "Debug Overlay (F3)"),
     ("key.keyboard.f5", "Perspective (F5)"),
+    ("action:key.volt.freelook", "Freelook (orbit camera)"),
     ("key.keyboard.z", "Horizon Zoom (Z)"),
     ("key.keyboard.b", "New Waypoint (B)"),
     ("key.keyboard.w", "Move Forward (W)"),
@@ -182,7 +183,7 @@ fn finalize_preset(
     buttons: Vec<CustomButton>,
 ) -> Settings {
     let mut s = Settings::default();
-    s.button_visibility = [2; 14];
+    s.button_visibility = [2; 15];
     let has_joystick = if let Some((stick, sprint_forward)) = joystick {
         s.button_visibility[Control::Move as usize] = 1;
         s.analog_movement = true;

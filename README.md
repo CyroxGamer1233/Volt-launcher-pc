@@ -45,7 +45,7 @@
       <br><sub>DOWNLOADS</sub>
     </td>
     <td align="center" bgcolor="#ff2d2d">
-      <a href="https://github.com/entitybrian69-bit/Volt-launcher/releases/tag/v1.0.0"><img src="https://img.shields.io/badge/v1.0.0-RELEASE-white?style=for-the-badge" alt="v1.0.0"></a>
+      <a href="https://github.com/entitybrian69-bit/Volt-launcher/releases/tag/v1.1.0"><img src="https://img.shields.io/badge/v1.1.0-RELEASE-white?style=for-the-badge" alt="v1.1.0"></a>
       <br><sub>RELEASE</sub>
     </td>
     <td align="center" bgcolor="#ff2d2d">

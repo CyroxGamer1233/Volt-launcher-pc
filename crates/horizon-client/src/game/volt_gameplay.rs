@@ -26,6 +26,9 @@ use winit::keyboard::KeyCode;
 pub(super) struct VoltRuntime {
     pub freelook_active: bool,
     freelook_key_was_down: bool,
+    /// Set while the touch button owns freelook, so the per-frame hold logic
+    /// does not cancel a press that no key is holding.
+    freelook_touch_latch: bool,
     zoom_toggle_active: bool,
     zoom_was_active: bool,
     zoom_scroll_steps: i32,
@@ -82,6 +85,7 @@ impl Default for VoltRuntime {
         Self {
             freelook_active: false,
             freelook_key_was_down: false,
+            freelook_touch_latch: false,
             zoom_toggle_active: false,
             zoom_was_active: false,
             zoom_scroll_steps: 0,
@@ -201,17 +205,21 @@ fn freelook_next_active(available: bool, toggle: bool, down: bool, was_down: boo
 }
 
 impl Game<'_> {
-    /// Returns true while `#2` 360° Freelook is actively orbiting the player.
-    pub(super) fn freelook_active(&self) -> bool {
-        self.extras.volt.freelook_active
-            && (self.settings.extras.volt_qol.freelook_enabled
-                || self
-                    .settings
-                    .extras
-                    .mod_catalog
-                    .is_on(VoltModId::Freelook))
+    /// Whether freelook may run at all: the mod is on and gameplay is in front.
+    pub(super) fn freelook_available(&self) -> bool {
+        (self.settings.extras.volt_qol.freelook_enabled
+            || self
+                .settings
+                .extras
+                .mod_catalog
+                .is_on(VoltModId::Freelook))
             && self.screen == Screen::Playing
             && self.title.is_none()
+    }
+
+    /// Returns true while `#2` 360° Freelook is actively orbiting the player.
+    pub(super) fn freelook_active(&self) -> bool {
+        self.extras.volt.freelook_active && self.freelook_available()
     }
 
     /// Read mod holds from physical inputs, not vanilla's translated key set.
@@ -271,16 +279,45 @@ impl Game<'_> {
         true
     }
 
-    /// Intercepts mouse/touch look deltas when `#2` 360° Freelook is held.
+    /// Intercepts mouse look deltas when `#2` 360° Freelook is held. `xo`/`yo`
+    /// are `Entity.turn` units (vanilla applies 0.15 degrees to each).
     pub(super) fn try_freelook_turn(&mut self, xo: f64, yo: f64) -> bool {
+        self.try_freelook_turn_degrees(xo as f32 * 0.15, yo as f32 * 0.15)
+    }
+
+    /// The same orbit, for a caller that already holds degrees: the touch
+    /// look path feeds `camera_delta`, which has the 180-degree scale applied.
+    /// Passing that through the 0.15 factor above would slow the camera to a
+    /// crawl, so the two units are kept apart deliberately.
+    pub(super) fn try_freelook_turn_degrees(&mut self, yaw: f32, pitch: f32) -> bool {
         if !self.freelook_active() {
             return false;
         }
         self.extras.volt.freelook_yaw =
-            (self.extras.volt.freelook_yaw + xo as f32 * 0.15).rem_euclid(360.0);
+            (self.extras.volt.freelook_yaw + yaw).rem_euclid(360.0);
         self.extras.volt.freelook_pitch =
-            (self.extras.volt.freelook_pitch + yo as f32 * 0.15).clamp(-89.5, 89.5);
+            (self.extras.volt.freelook_pitch + pitch).clamp(-89.5, 89.5);
         true
+    }
+
+    /// Flips freelook from the on-screen touch button. The button cannot hold a
+    /// key, so it toggles: the next `tick_volt_frame` keeps the latch only while
+    /// freelook is available, which is also how it turns itself off when a
+    /// screen opens or the mod is disabled.
+    pub(super) fn toggle_freelook_touch(&mut self) {
+        if !self.freelook_available() {
+            return;
+        }
+        let active = !self.freelook_active();
+        self.extras.volt.freelook_touch_latch = active;
+        self.extras.volt.freelook_active = active;
+        if active {
+            self.extras.volt.freelook_yaw = self.yaw;
+            self.extras.volt.freelook_pitch = self.pitch;
+        }
+        // The button acts as a press-and-release of the binding, so a later
+        // real key press starts from a clean edge.
+        self.extras.volt.freelook_key_was_down = false;
     }
 
     /// Open native mod screens from a physical key or mouse binding.
@@ -428,21 +465,29 @@ impl Game<'_> {
         }
         self.extras.volt.zoom_was_active = zoom_active;
 
-        let freelook_available = (self.settings.extras.volt_qol.freelook_enabled
-            || self.settings.extras.mod_catalog.is_on(VoltModId::Freelook))
-            && self.screen == Screen::Playing
-            && self.title.is_none();
+        let freelook_available = self.freelook_available();
         let key_down = freelook_available && self.volt_binding_held("key.volt.freelook");
         let was_active = self.extras.volt.freelook_active;
-        let active = freelook_next_active(
-            freelook_available,
-            self.settings.extras.mod_catalog.freelook_toggle,
-            key_down,
-            self.extras.volt.freelook_key_was_down,
-            was_active,
-        );
+        let active = if self.extras.volt.freelook_touch_latch {
+            // Sticky from the touch button until it is pressed again (or
+            // freelook stops being available, handled below).
+            freelook_available
+        } else {
+            freelook_next_active(
+                freelook_available,
+                self.settings.extras.mod_catalog.freelook_toggle,
+                key_down,
+                self.extras.volt.freelook_key_was_down,
+                was_active,
+            )
+        };
         self.extras.volt.freelook_key_was_down = key_down;
         self.extras.volt.freelook_active = active;
+        // A real key press hands control back to the hold/toggle binding, and
+        // an unavailable camera drops the latch so it cannot come back stale.
+        if !freelook_available || key_down {
+            self.extras.volt.freelook_touch_latch = false;
+        }
         if active && !was_active {
             self.extras.volt.freelook_yaw = self.yaw;
             self.extras.volt.freelook_pitch = self.pitch;

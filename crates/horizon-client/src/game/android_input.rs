@@ -300,6 +300,16 @@ impl Game<'_> {
                 _ => {}
             }
             if let Some(mapping) = name.strip_prefix("action:") {
+                // Freelook is a Volt mod binding, not a vanilla key: its default
+                // (Left Alt) is not a mapping the game acts on, so a touch
+                // button bound to it would otherwise do nothing. Ask the game
+                // to flip the camera instead.
+                if mapping == "key.volt.freelook" {
+                    if down {
+                        self.pad.touch.freelook_requested = true;
+                    }
+                    continue;
+                }
                 let default = horizon_client::keybinds::KeyBinds::default_of(mapping);
                 let result = if let Some(key) = horizon_client::keybinds::key_code(default) {
                     if down && self.screenshot_shortcut(key, false) {

@@ -152,6 +152,13 @@ pub struct TouchControls {
     aspect: f32,
     loaded: bool,
     pub chat_requested: bool,
+    /// The Freelook mod is switched on, so the on-screen Look button should be
+    /// offered. Set by the game; the touch layer cannot read settings itself.
+    pub freelook_available: bool,
+    /// A freelook button was pressed this frame. Freelook is a Volt mod
+    /// binding (`key.volt.freelook`), so the touch layer cannot drive it
+    /// through a vanilla key: it asks the game to flip the mod instead.
+    pub freelook_requested: bool,
     pub settings_requested: bool,
     pub debug_requested: bool,
     pub perspective_requested: bool,
@@ -167,7 +174,6 @@ pub struct TouchControls {
     pub holding: bool,
     pub break_progress: f32,
     last_marker: Option<([f32; 2], Instant)>,
-    last_sneak_tap: Option<Instant>,
     /// When the on-screen sneak button was last pressed. The pad merge uses
     /// it to force toggle behavior for touch-origin sneaks, even when the
     /// controller's stick-click is configured as hold-to-sneak.
@@ -292,6 +298,11 @@ impl TouchControls {
             return false;
         }
         if c == Control::Shield && !self.shield_available && self.editor.is_none() {
+            return false;
+        }
+        // The Look button only makes sense while the Freelook mod is on. The
+        // editor still lists it so a layout can be prepared in advance.
+        if c == Control::Freelook && !self.freelook_available && self.editor.is_none() {
             return false;
         }
         if self.auxiliary_only && !Self::auxiliary_control(c) {
@@ -499,12 +510,12 @@ impl TouchControls {
                     Control::Perspective => {
                         region(b, a, "gui", [236.0, 46.0, 18.0, 18.0], bounds, color)
                     }
-                    Control::Offhand | Control::Shield => {
+                    Control::Offhand | Control::Shield | Control::Freelook => {
                         menu_frame(b, a, bounds, color);
-                        let label = if control == Control::Offhand {
-                            "Swap"
-                        } else {
-                            "Shield"
+                        let label = match control {
+                            Control::Offhand => "Swap",
+                            Control::Shield => "Shield",
+                            _ => "Look",
                         };
                         let start = b.vertices.len();
                         let width = HudBatch::text_width(a, label);
@@ -591,6 +602,13 @@ impl TouchControls {
             }
         }
     }
+    /// Whether the on-screen sneak button toggles instead of holding. It
+    /// always does, except while flying or swimming, where the same button is
+    /// the held descend control, and while riding, where it is not crouching.
+    fn sneak_toggles(&self) -> bool {
+        !self.vertical_movement && !self.swimming && !self.mounted
+    }
+
     /// A touch sneak press in the last moment: the pad layer treats it as a
     /// toggle (Bedrock parity) regardless of the controller's stick-click
     /// hold/toggle preference.
@@ -692,24 +710,15 @@ impl TouchControls {
                     self.perspective_requested = true;
                     Role::Ignore
                 }
-                Some(Control::Sneak)
-                    if self.settings.mode == Mode::Dpad
-                        && !self.vertical_movement
-                        && !self.swimming
-                        && !self.mounted =>
-                {
-                    // The classic D-pad toggles crouching on a double tap.
-                    let now = Instant::now();
-                    if self
-                        .last_sneak_tap
-                        .take()
-                        .is_some_and(|t| now.duration_since(t) < Duration::from_millis(500))
-                    {
-                        Role::Button(Button::RightStick)
-                    } else {
-                        self.last_sneak_tap = Some(now);
-                        Role::Ignore
-                    }
+                Some(Control::Freelook) => {
+                    self.freelook_requested = true;
+                    Role::Ignore
+                }
+                Some(Control::Sneak) if self.sneak_toggles() => {
+                    // Toggle crouch: one tap flips it, matching the pad's
+                    // stick-click. This used to need a double tap in D-pad
+                    // mode only, so the first tap looked like a dead button.
+                    Role::Button(Button::RightStick)
                 }
                 Some(Control::Sprint) if self.settings.sprint_toggle => {
                     self.sprint_latched = !self.sprint_latched;
@@ -764,7 +773,6 @@ impl TouchControls {
     pub fn clear(&mut self) {
         self.clear_custom();
         self.fingers.clear();
-        self.last_sneak_tap = None;
         self.last_sneak_button = None;
         self.sprint_latched = false;
         self.pending = PadState::default();
@@ -775,6 +783,7 @@ impl TouchControls {
         self.holding_use = false;
         self.holding = false;
         self.chat_requested = false;
+        self.freelook_requested = false;
         self.settings_requested = false;
         self.debug_requested = false;
         self.perspective_requested = false;
@@ -1706,6 +1715,60 @@ mod tests {
         assert!(t.recent_sneak_button());
         t.clear();
         assert!(!t.recent_sneak_button());
+    }
+    /// One tap crouches on every scheme. D-pad used to need a double tap, so
+    /// the first tap did nothing and the button looked broken on those
+    /// devices.
+    #[test]
+    fn freelook_button_is_hidden_until_the_mod_is_on() {
+        let mut t = TouchControls::default();
+        let center = t.placement(Control::Freelook).center;
+        assert!(t.control_at(center) != Some(Control::Freelook));
+        t.freelook_available = true;
+        assert_eq!(t.control_at(center), Some(Control::Freelook));
+    }
+    #[test]
+    fn one_sneak_tap_toggles_on_every_scheme() {
+        for mode in Mode::ALL {
+            let mut t = TouchControls::default();
+            t.settings.mode = mode;
+            let center = t.placement(Control::Sneak).center;
+            t.update(1, center, true, false);
+            assert!(
+                t.state().held(Button::RightStick),
+                "{mode:?}: a single sneak tap must register"
+            );
+        }
+    }
+    /// Flying and swimming reuse the sneak button as a held descend control,
+    /// so it must not latch as a toggle there.
+    #[test]
+    fn sneak_does_not_toggle_while_flying_or_swimming() {
+        for (vertical, swim) in [(true, false), (false, true)] {
+            let mut t = TouchControls::default();
+            t.vertical_movement = vertical;
+            t.swimming = swim;
+            let center = t.placement(Control::Sneak).center;
+            t.update(1, center, true, false);
+            assert!(!t.state().held(Button::RightStick));
+        }
+    }
+    /// The on-screen Freelook button cannot hold a key, so pressing it asks
+    /// the game to flip the mod once.
+    #[test]
+    fn freelook_button_requests_one_toggle_per_press() {
+        let mut t = TouchControls::default();
+        // The button is only offered while the mod is on.
+        t.freelook_available = true;
+        let center = t.placement(Control::Freelook).center;
+        assert!(!t.freelook_requested);
+        t.update(1, center, true, false);
+        assert!(t.freelook_requested);
+        // Releasing the same finger must not queue a second toggle.
+        t.freelook_requested = false;
+        t.update(1, center, false, true);
+        assert!(!t.freelook_requested);
+        t.clear();
     }
     #[test]
     fn editing_owns_input_and_cancel_restores_layouts() {

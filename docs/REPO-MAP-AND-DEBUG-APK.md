@@ -52,7 +52,7 @@ the phone (no Java runtime, no JVM, no Minecraft jar at play time).
 
 APK details: `--public` release profile = opt level 3 + ThinLTO, **non-debuggable**,
 paths remapped, agent-control socket off. `minSdk 28` (Android 9), `targetSdk 35`,
-`versionName 1.0.0`, versionCode = `280000 + run_number*2 + abi_offset`.
+`versionName 1.1.0`, versionCode = `280000 + run_number*2 + abi_offset`.
 The **debug channel** is a *separate app* (`ae.net.Voltlauncher.debug`, "Volt Debug")
 so it never overwrites a stable install.
 
@@ -298,3 +298,31 @@ out by reading: the login hello carries the correct offline UUID
 known-packs entry; chat answers go out as a plain `serverbound_chat_message`
 with `signature: None`. To pin it down rather than guess again, the next step
 needs the exact kick text plus the client brand the server sees.
+
+## Volt 1.1.0 — touch Freelook, crouch, Frame Items Loader
+
+**Freelook did nothing on touch.** `try_freelook_turn` was only called from
+`apply_mouse_look`, so the Android look path (`game.rs`, the `touch.update`
+branch) turned `yaw`/`pitch` directly and the mod never saw a delta. Touch now
+goes through `try_freelook_turn_degrees`, a degree-unit sibling of the
+`Entity.turn`-unit entry point — the touch path feeds `camera_delta`, which has
+already applied the 180-degree scale, so routing it through the 0.15 factor
+would have run the camera at 15% speed. The on-screen **Look** button
+(`Control::Freelook`, appended to the 14 old controls so saved layouts still
+load: `deserialize_layouts` and `deserialize_visibility` accept 10/12/14/15) is
+a latch in `VoltRuntime::freelook_touch_latch`, because a touch button cannot
+hold a key. It shows only while the mod is on, and a real key press hands
+control back to the hold/toggle binding.
+
+**Crouch needed two taps on D-pad devices.** The sneak arm in
+`TouchControls::update` only produced `Button::RightStick` on the second tap
+within 500 ms, and only in `Mode::Dpad`; the first tap stored a timestamp and
+returned `Role::Ignore`. Every scheme now routes through `sneak_toggles()`
+(one tap, except while flying/swimming, where the button is a held descend
+control). `last_sneak_tap` is gone.
+
+**Frame Items Loader** (`VoltBoostPlusConfig::frame_items_loader`, saved as
+`voltFrameItemsLoader`) skips the 1024-block `shouldRenderAtSqrDistance` check
+and the frustum test in `frames.rs` for item frames only. Off by default and
+deliberately excluded from `apply_volt_preset`: it draws more than vanilla, so
+a Boost profile must not switch it on.

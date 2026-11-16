@@ -339,7 +339,7 @@ pub const CATALOG: [VoltModMeta; TOTAL_VOLT_MODS] = [
         category: VoltModCategory::PvpUtility,
         default_on: false,
         summary: "Client-safe 360° orbit camera without altering movement heading.",
-        description: "Hold the Freelook key (Left Alt / touch button) to orbit the camera 360° around your character while sprinting, bridging, or flying without changing server rotation packets.",
+        description: "Hold the Freelook key (Left Alt), or tap the on-screen Look button, to orbit the camera 360° around your character while sprinting, bridging, or flying without changing server rotation packets.",
     },
     VoltModMeta {
         id: VoltModId::Zoomify,
