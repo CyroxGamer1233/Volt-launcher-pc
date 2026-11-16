@@ -1443,7 +1443,7 @@ impl DrawCtx<'_> {
     /// centred pill dock (Home · Instances · Browse · Settings) and round
     /// Discord / Files buttons on the right. Targets are pushed before any
     /// page content so the shell always wins its taps.
-    fn draw_shell(&mut self, ui: &mut Ui, w: f32, h: f32, _account_status: &str) {
+    fn draw_shell(&mut self, ui: &mut Ui, _w: f32, h: f32, _account_status: &str) {
         // Black Glassy: far-left vertical rail instead of bottom dock
         let bar_w = 78.0;
         let bar_x = 8.0;

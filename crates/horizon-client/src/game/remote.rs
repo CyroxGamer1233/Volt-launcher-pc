@@ -2817,9 +2817,10 @@ impl Game<'_> {
             None => None,
         };
         if let Some(summary) = ready {
-            self.add_mod_chat_line(horizon_client::text::Text::literal(format!(
-                "[join] {summary}"
-            )));
+            self.chat_line(
+                horizon_client::text::Text::literal(format!("[join] {summary}")),
+                horizon_client::chat::ChatSource::Client,
+            );
         }
     }
 
@@ -8669,9 +8670,12 @@ impl Game<'_> {
                 // player sees the items and clicks them, and the clicks go to
                 // the server as ordinary container clicks.
                 self.trace_join(format!("plain window {menu}"));
-                self.add_mod_chat_line(horizon_client::text::Text::literal(format!(
-                    "[join] {menu} has no dedicated screen; showing its slots"
-                )));
+                self.chat_line(
+                    horizon_client::text::Text::literal(format!(
+                        "[join] {menu} has no dedicated screen; showing its slots"
+                    )),
+                    horizon_client::chat::ChatSource::Client,
+                );
                 Some(BlockEntity::Chest(vec![None; 54]))
             }
         };
