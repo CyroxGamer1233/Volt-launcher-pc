@@ -15,8 +15,6 @@ horizon-client-input = { path = "../horizon-client-input" }
 horizon-client-render = { path = "../horizon-client-render" }
 horizon-anticheat = { path = "../horizon-anticheat" }
 horizon-client = { path = "../horizon-client", default-features = false }
-# Native mod injections in the shared game code link directly against this crate.
-horizon-client-render = { path = "../horizon-client-render" }
 android_logger = "0.15"
 regex = "1"
 horizon-hdr = { path = "../horizon-hdr" }
