@@ -534,6 +534,12 @@ pub(super) struct Remote {
     pub(super) offline_skin_gen: u64,
     pub(super) offline_cape_gen: u64,
     pub(super) skin_synced: bool,
+    /// What the server sent in the first seconds of this join, for the
+    /// "Captcha Failed" class of kicks: a plugin that teleports the player to
+    /// a check area, opens a screen, or takes commands away leaves a trace
+    /// here. Printed to the log and shown once in chat when `captcha_trace`
+    /// is on, so a player can read it on the phone and report it.
+    pub(super) join_trace: Vec<String>,
     /// A SkinsRestorer-style `/skin` sync waiting for the player to act.
     /// Cracked servers gate every command behind their auth plugins
     /// (`/login`, a captcha): a command fired the instant the command tree
@@ -954,6 +960,7 @@ impl Game<'_> {
             offline_cape_gen: 0,
             skin_synced: false,
             pending_skin_cmd: None,
+            join_trace: Vec::new(),
             volt_peer_skins: HashMap::new(),
             transfer: None,
         });
@@ -2644,13 +2651,27 @@ impl Game<'_> {
                 }
             }
             // A workstation: its inputs, its result, then the inventory.
-            m => {
+            m if Self::remote_station_kind(m).is_some() => {
                 let kind = Self::remote_station_kind(m)?;
                 let inputs = kind.inputs();
                 let own = inputs + usize::from(kind.has_result());
                 match s {
                     _ if s < inputs => Some(super::stations::INPUT + s),
                     _ if s < own => Some(super::stations::RESULT),
+                    _ if s < own + 27 => Some(9 + s - own),
+                    _ if s < own + 36 => Some(s - own - 27),
+                    _ => None,
+                }
+            }
+            // A plugin's own window (a GUI captcha and the like), drawn as a
+            // double chest. Its 54 slots are a superset of every layout a
+            // plugin uses (9x1 up to 9x6), and because the container slots
+            // always precede the 27-slot inventory, a window's own slots land
+            // in the chest grid at the same indices the plugin expects.
+            _ => {
+                let own = 54;
+                match s {
+                    _ if s < own => Some(300 + s),
                     _ if s < own + 27 => Some(9 + s - own),
                     _ if s < own + 36 => Some(s - own - 27),
                     _ => None,
@@ -2765,6 +2786,40 @@ impl Game<'_> {
         }
         if let Some(scale) = scale {
             m.extra.model_scale = scale as f32;
+        }
+    }
+
+    /// Records one line of what the server did right after this join, for
+    /// kicks like "Captcha Failed" that arrive while the player is still in
+    /// the world. A captcha plugin leaves its signature here: a teleport to a
+    /// check area, a menu opened for a GUI challenge, or a command tree with
+    /// its answer commands. The trace is logged and, once, shown in chat so a
+    /// player on a phone can read it without a log viewer.
+    fn trace_join(&mut self, event: String) {
+        // A server that keeps re-teleporting the same spot would bury the
+        // useful part of the trace; keep the first of each distinct line.
+        if let Some(r) = self.remote.as_ref() {
+            if r.join_trace.iter().any(|seen| *seen == event) {
+                return;
+            }
+            if r.join_trace.len() >= 8 {
+                return;
+            }
+        }
+        log::info!("join trace: {event}");
+        // Collect first, then print: the chat line needs `&mut self`, so the
+        // borrow of `self.remote` must end before it.
+        let ready = match self.remote.as_mut() {
+            Some(r) => {
+                r.join_trace.push(event);
+                (r.join_trace.len() == 8).then(|| r.join_trace.join(" · "))
+            }
+            None => None,
+        };
+        if let Some(summary) = ready {
+            self.add_mod_chat_line(horizon_client::text::Text::literal(format!(
+                "[join] {summary}"
+            )));
         }
     }
 
@@ -2902,7 +2957,13 @@ impl Game<'_> {
                 }
                 self.capture(true);
             }
-            C::PlayerPosition(p) => self.remote_teleport(&p)?,
+            C::PlayerPosition(p) => {
+                self.trace_join(format!(
+                    "teleport {:.0},{:.0},{:.0}",
+                    p.position[0], p.position[1], p.position[2]
+                ));
+                self.remote_teleport(&p)?;
+            }
             C::PlayerRotation(p) => {
                 self.yaw = if p.relative_yaw {
                     self.yaw + p.yaw
@@ -4048,7 +4109,15 @@ impl Game<'_> {
                     _ => {}
                 }
             }
-            C::OpenScreen(p) => self.remote_open_screen(p),
+            C::OpenScreen(p) => {
+                let menu = self
+                    .remote
+                    .as_ref()
+                    .and_then(|r| r.builtin.get("minecraft:menu")?.name(p.menu).map(str::to_owned))
+                    .unwrap_or_else(|| format!("menu#{}", p.menu));
+                self.trace_join(format!("screen {menu}"));
+                self.remote_open_screen(p);
+            }
             C::MountScreenOpen(p) => self.remote_open_mount(p),
             C::RecipeBookAdd(p) => self.remote_recipe_book_add(p),
             C::RecipeBookRemove(p) => self.remote_recipe_book_remove(p),
@@ -4081,6 +4150,7 @@ impl Game<'_> {
                 }
             }
             C::Commands(p) => {
+                self.trace_join(format!("{} command nodes", p.nodes.len()));
                 let tree = horizon_client::command::network::from_packet(
                     &p,
                     horizon_client::command::vanilla::dispatcher(),
@@ -8591,17 +8661,18 @@ impl Game<'_> {
                 Some(BlockEntity::Chest(vec![None; rows * 9]))
             }
             _ => {
-                // Unsupported menu: tell the server we closed it.
-                self.send(S::ContainerClose(play::ContainerClose {
-                    container: p.container,
-                }));
-                self.chat_line(
-                    horizon_client::text::Text::literal(format!(
-                        "(Horizon cannot show {menu} screens yet)"
-                    )),
-                    horizon_client::chat::ChatSource::Client,
-                );
-                return;
+                // A menu this build has no screen for - most often a plugin's
+                // own window, such as the GUI captcha an anti-bot throws up
+                // right after the join. Closing it tells the plugin the player
+                // dismissed its challenge, which fails the check. Keep the
+                // container open and show its slots as a plain chest: the
+                // player sees the items and clicks them, and the clicks go to
+                // the server as ordinary container clicks.
+                self.trace_join(format!("plain window {menu}"));
+                self.add_mod_chat_line(horizon_client::text::Text::literal(format!(
+                    "[join] {menu} has no dedicated screen; showing its slots"
+                )));
+                Some(BlockEntity::Chest(vec![None; 54]))
             }
         };
         let title = menu_title(&p.title);
@@ -9934,7 +10005,12 @@ mod tests {
         }
         assert_eq!(Game::menu_slot_index("minecraft:generic_9x6", 354), None);
         assert_eq!(Game::menu_slot_index("minecraft:generic_9x6", 504), None);
-        assert_eq!(Game::menu_slot_index("unknown", 0), None);
+        // A plugin's own window is drawn as a 54-slot chest instead of being
+        // closed on the server (which read as the player failing its captcha).
+        assert_eq!(Game::menu_slot_index("some.plugin:captcha", 0), Some(300));
+        assert_eq!(Game::menu_slot_index("some.plugin:captcha", 53), Some(353));
+        // Its inventory and hotbar follow the 54 container slots.
+        assert_eq!(Game::menu_slot_index("some.plugin:captcha", 54), Some(9));
     }
 
     /// `FireworkRocketItem.use` is SUCCESS while gliding: the main hand's
