@@ -379,6 +379,7 @@ impl ControlsStudio {
             buttons: self.settings.custom_buttons.len(),
             drawers: self.drawer_count(),
             has_joystick: self.joystick_visible(),
+            distinct: 0,
         });
     }
 
@@ -1522,6 +1523,7 @@ impl ControlsStudio {
                     buttons: self.settings.custom_buttons.len(),
                     drawers: self.drawer_count(),
                     has_joystick: self.joystick_visible(),
+                    distinct: 0,
                 };
                 self.settings.imported_from = Some(meta.clone());
                 let layout = ImportedControlLayout {

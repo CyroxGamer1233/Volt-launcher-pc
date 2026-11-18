@@ -210,6 +210,7 @@ fn finalize_preset(
         buttons: count,
         drawers: 0,
         has_joystick,
+        distinct: 0,
     });
     s.sanitize();
     s

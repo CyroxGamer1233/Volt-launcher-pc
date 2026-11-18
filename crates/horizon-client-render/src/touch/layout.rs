@@ -102,6 +102,12 @@ pub struct ImportedMeta {
     pub drawers: usize,
     #[serde(default)]
     pub has_joystick: bool,
+    /// How many distinct on-screen positions the imported buttons occupy.
+    /// When this is lower than `buttons`, some controls were stacked — which
+    /// is exactly how "controls piled up in two columns" looked. Surfaced in
+    /// the UI so a failed parse is visible instead of silent.
+    #[serde(default)]
+    pub distinct: usize,
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]

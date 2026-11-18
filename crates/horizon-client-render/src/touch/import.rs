@@ -242,6 +242,7 @@ fn import_native(v: &Value, title: String) -> Result<ImportedControlLayout, Stri
         buttons: settings.custom_buttons.len(),
         drawers,
         has_joystick,
+        distinct: 0,
     });
     settings.imported_from = Some(meta.clone());
     settings.sanitize();
@@ -459,10 +460,17 @@ fn drawer_orientation(v: Option<&Value>) -> DrawerDir {
 fn spread_fallback(axis_len: f32, side: f32, seed: usize, horizontal: bool) -> f32 {
     // Deterministic, so re-importing the same file always gives the same
     // layout: alternate between two columns and step down a row per seed.
+    // Ladder that never repeats for realistic button counts: the old
+    // `seed % 8` wrapped, so a 10+ button layout stacked two buttons on every
+    // single slot and the labels drew on top of each other.
+    const ROWS: usize = 16;
+    let row = seed % ROWS;
+    let col = (seed / ROWS) % 4;
+    let xs = [0.28f32, 0.72, 0.50, 0.14];
     let start = if horizontal {
-        axis_len * if seed % 2 == 0 { 0.28 } else { 0.72 }
+        axis_len * xs[col.min(3)]
     } else {
-        axis_len * (0.14 + (seed % 8) as f32 * 0.09)
+        axis_len * (0.06 + row as f32 * (0.88 / ROWS as f32))
     };
     let margin = axis_len * 0.02;
     (start - side * 0.5).clamp(margin, (axis_len - side - margin).max(margin))
@@ -491,17 +499,24 @@ fn pojav_box(
         px_scale,
         preferred_scale: scaled_at,
     };
+    // Preferred order: a Pojav dynamic expression (dp after `${}` eval), then
+    // ANY recognised coordinate key at top level or nested one level
+    // (`position.x`, `rect.x`, ...), then the spread fallback.
     let x = obj
         .get("dynamicX")
         .and_then(Value::as_str)
         .and_then(|s| eval_dynamic_expr(s, &vars, ref_w))
-        .or_else(|| json_f32(obj.get("x")).map(|x| if x <= 1.0 && x >= 0.0 && raw_w < ref_w * 0.5 && obj.get("dynamicX").is_none() && x.fract() != 0.0 { x * ref_w } else { x }))
+        .or_else(|| {
+            find_coord(obj, X_KEYS, 0).map(|raw| resolve_axis_px(raw, ref_w))
+        })
         .unwrap_or_else(|| spread_fallback(ref_w, raw_w, seed, true));
     let y = obj
         .get("dynamicY")
         .and_then(Value::as_str)
         .and_then(|s| eval_dynamic_expr(s, &vars, ref_h))
-        .or_else(|| json_f32(obj.get("y")).map(|y| if y <= 1.0 && y >= 0.0 && raw_h < ref_h * 0.5 && obj.get("dynamicY").is_none() && y.fract() != 0.0 { y * ref_h } else { y }))
+        .or_else(|| {
+            find_coord(obj, Y_KEYS, 1).map(|raw| resolve_axis_px(raw, ref_h))
+        })
         .unwrap_or_else(|| spread_fallback(ref_h, raw_h, seed, false));
     (x, y, raw_w, raw_h)
 }
@@ -801,8 +816,13 @@ fn parse_fcl_base_info(
     // A control with no stored position must not land at dead centre, where
     // every such control stacks on one spot ("everything teleported to the
     // middle"). Spreading sends it to a free-ish slot instead.
-    let rx = json_f32(base.get("xPosition").or_else(|| base.get("x")));
-    let ry = json_f32(base.get("yPosition").or_else(|| base.get("y")));
+    // `xPosition`/`yPosition` first (what FCL writes), then any other known
+    // coordinate key at this level or nested one object deep, so a variant
+    // that moved its geometry under `position`/`rect` still imports.
+    let rx = json_f32(base.get("xPosition").or_else(|| base.get("x")))
+        .or_else(|| find_coord(base, X_KEYS, 0));
+    let ry = json_f32(base.get("yPosition").or_else(|| base.get("y")))
+        .or_else(|| find_coord(base, Y_KEYS, 1));
     // FCL writes positions as dp*10 (500 = 50dp), plain dp (50), a 0..1
     // fraction, or a 0..100 percentage. Dividing everything by 1000 put
     // every dp position in the left/top few percent of the screen, which
@@ -1030,7 +1050,8 @@ fn parse_zalith_layer(
     }
     if joystick.is_none()
         && let Some(sticks) = layer
-            .get("directionButtons")
+            .get("joystickButtons")
+            .or_else(|| layer.get("directionButtons"))
             .or_else(|| layer.get("joysticks"))
             .and_then(Value::as_array)
         && let Some(stick) = sticks.first()
@@ -1050,44 +1071,60 @@ fn parse_zalith_layer(
 }
 
 fn parse_zalith_rect(obj: &Value, fallback_h: f32, seed: usize) -> (f32, f32, f32, f32) {
+    // ---- size ----
+    // Zalith 2 nests it as `buttonSize: {type: "dp", widthDp, heightDp}`.
+    // Zalith 1 writes flat `width`/`height` with an `isPercentageSize` flag.
+    let size = obj.get("buttonSize");
+    // Zalith 2 joysticks carry a single `sizeDp` instead of width/height.
+    let rw = size
+        .and_then(|s| json_f32(s.get("widthDp")))
+        .or_else(|| json_f32(obj.get("width")))
+        .or_else(|| json_f32(obj.get("sizeDp")))
+        .unwrap_or(50.0);
+    let rh = size
+        .and_then(|s| json_f32(s.get("heightDp")))
+        .or_else(|| json_f32(obj.get("height")))
+        .or_else(|| json_f32(obj.get("sizeDp")))
+        .unwrap_or(50.0);
     let normalize_coord = |raw: f32, dp_axis: f32| -> f32 {
         if raw > 1000.0 {
             raw / 10000.0
         } else if raw > 100.0 {
             raw / 1000.0
         } else if raw > 1.0 {
-            // Could be percentage 0..100 or dp
             (raw / 100.0).min(raw / dp_axis)
         } else {
             raw
         }
     };
-    let rw = json_f32(obj.get("width")).unwrap_or(50.0);
-    let rh = json_f32(obj.get("height")).unwrap_or(50.0);
-    let norm_w = if obj.get("isPercentageSize").and_then(Value::as_bool) == Some(false)
-        || (rw <= 250.0 && rh <= 250.0 && rw > 1.0)
-    {
+    // A dp size is density-independent: divide by the reference axis.
+    let dp_sized = size.is_some()
+        || obj.get("isPercentageSize").and_then(Value::as_bool) == Some(false)
+        || (rw <= 250.0 && rh <= 250.0 && rw > 1.0);
+    let norm_w = if dp_sized {
         (rw / REF_WIDTH_DP).clamp(0.02, 0.8)
     } else {
         normalize_coord(rw, REF_WIDTH_DP).clamp(0.02, 0.8)
     };
-    let norm_h = if obj.get("isPercentageSize").and_then(Value::as_bool) == Some(false)
-        || (rw <= 250.0 && rh <= 250.0 && rh > 1.0)
-    {
+    let norm_h = if dp_sized {
         (rh / REF_HEIGHT_DP).clamp(0.025, 0.55)
     } else {
         normalize_coord(rh, REF_HEIGHT_DP).clamp(0.025, 0.55)
     };
     let norm_h = if norm_h.is_finite() { norm_h } else { fallback_h };
-    // Zalith 2 shares Pojav's dynamic expressions, and many layouts carry
-    // `dynamicX`/`dynamicY` INSTEAD of x/y. Reading only x/y meant a missing
-    // position defaulted to 0.5 — dead centre — so every such button stacked
-    // on one spot.
+
+    // ---- position ----
+    // Zalith 2 stores it nested: `position: {x, y}` on 0..=10000, where the
+    // value is `pixel / (screen - widget)` — a FRACTION OF THE FREE SPACE,
+    // exactly like Pojav's `${right}`/`${bottom}`. Neither x/y nor
+    // dynamicX/dynamicY exists there, so reading only those dropped every
+    // ZL2 button into the spread fallback and stacked them in two columns.
+    let position = obj.get("position");
     let vars = ExprVars {
         screen_w: REF_WIDTH_DP,
         screen_h: REF_HEIGHT_DP,
-        btn_w: norm_w * REF_WIDTH_DP,
-        btn_h: norm_h * REF_HEIGHT_DP,
+        btn_w: rw.max(1.0),
+        btn_h: rh.max(1.0),
         dp_px: 1.0,
         px_scale: 1.0 / 2.75,
         preferred_scale: 100.0,
@@ -1097,23 +1134,23 @@ fn parse_zalith_rect(obj: &Value, fallback_h: f32, seed: usize) -> (f32, f32, f3
             .and_then(Value::as_str)
             .and_then(|s| eval_dynamic_expr(s, &vars, axis))
     };
-    let norm = |raw: f32| -> f32 {
-        (if raw > 1000.0 {
-            raw / 10000.0
-        } else if raw > 1.0 {
-            raw / 100.0
-        } else {
-            raw
-        })
-        .clamp(0.0, 1.0)
+    // Zalith 2's `position` object is a KNOWN schema: 0..=10000 of the free
+    // space. Magnitude guessing must not touch it — a legitimate `y: 1000`
+    // would otherwise be read as `1000/1000 = 1.0` (bottom edge).
+    let zl2_free = |axis: &str| -> Option<f32> {
+        position
+            .and_then(|p| json_f32(p.get(axis)))
+            .map(|raw| (raw / 10000.0).clamp(0.0, 1.0))
     };
     let tx = dynamic("dynamicX", REF_WIDTH_DP)
         .map(|px| (px / REF_WIDTH_DP).clamp(0.0, 1.0))
-        .or_else(|| json_f32(obj.get("x")).map(norm))
+        .or_else(|| zl2_free("x"))
+        .or_else(|| find_coord(obj, X_KEYS, 0).map(position_to_fraction))
         .unwrap_or_else(|| if seed % 2 == 0 { 0.28 } else { 0.72 });
     let ty = dynamic("dynamicY", REF_HEIGHT_DP)
         .map(|px| (px / REF_HEIGHT_DP).clamp(0.0, 1.0))
-        .or_else(|| json_f32(obj.get("y")).map(norm))
+        .or_else(|| zl2_free("y"))
+        .or_else(|| find_coord(obj, Y_KEYS, 1).map(position_to_fraction))
         .unwrap_or_else(|| 0.14 + (seed % 8) as f32 * 0.09);
 
     let left = (1.0 - norm_w) * tx;
@@ -1171,13 +1208,16 @@ fn parse_zalith_button(btn: &Value, seed: usize) -> Option<CustomButton> {
         .or_else(|| btn.get("passThruEnabled"))
         .and_then(Value::as_bool)
         .unwrap_or(false);
-    let label = btn
-        .get("text")
-        .or_else(|| btn.get("name"))
+    // Zalith 2 keeps the caption as `text: {default: "..."}` — an object, so
+    // `Value::as_str` never matched and every ZL2 button imported nameless.
+    let text = btn.get("text");
+    let raw_label = text
         .and_then(Value::as_str)
+        .or_else(|| text.and_then(|t| t.get("default")).and_then(Value::as_str))
+        .or_else(|| btn.get("name").and_then(Value::as_str))
         .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(|s| truncate_chars(s, 32));
+        .filter(|s| !s.is_empty());
+    let label = raw_label.map(|s| truncate_chars(s, 32));
 
     let primary = tokens.remove(0);
     let placement = Placement {
@@ -1284,12 +1324,24 @@ fn assemble_imported_settings(
     settings.offhand_button = false;
     settings.shield_button = false;
 
+    let distinct = {
+        let mut seen: Vec<(i32, i32)> = Vec::with_capacity(custom_buttons.len());
+        for b in &custom_buttons {
+            let c = b.layouts[0].center;
+            let key = ((c[0] * 1000.0).round() as i32, (c[1] * 1000.0).round() as i32);
+            if !seen.contains(&key) {
+                seen.push(key);
+            }
+        }
+        seen.len()
+    };
     let meta = ImportedMeta {
         name,
         format,
         buttons: custom_buttons.len(),
         drawers,
         has_joystick,
+        distinct,
     };
     settings.custom_buttons = custom_buttons;
     settings.imported_from = Some(meta.clone());
@@ -1309,6 +1361,130 @@ fn parse_visibility_mode(v: Option<&Value>) -> (bool, bool) {
         "MENU" | "IN_MENU" | "INMENU" | "GUI" => (false, true),
         _ => (true, true),
     }
+}
+
+/// Every key name any launcher has ever used for a control's horizontal or
+/// vertical anchor. Checked in order, at the top level *and* one object deep
+/// (`position.x`, `layout.x`, ...), so a format we have never seen still
+/// yields coordinates instead of silently collapsing to the fallback grid.
+const X_KEYS: &[&str] = &[
+    "dynamicX", "x", "xPosition", "positionX", "position_x", "centerX", "center_x",
+    "left", "offsetX", "offset_x", "posX", "pos_x", "layoutX",
+];
+const Y_KEYS: &[&str] = &[
+    "dynamicY", "y", "yPosition", "positionY", "position_y", "centerY", "center_y",
+    "top", "offsetY", "offset_y", "posY", "pos_y", "layoutY",
+];
+/// Objects worth looking inside for a position, besides the button itself.
+const POSITION_CONTAINERS: &[&str] = &[
+    "position", "pos", "layout", "rect", "bounds", "placement", "location", "transform",
+];
+
+/// Interpret a raw position value of unknown units as a fraction of the free
+/// space (0..=1), which is what `CustomButton` stores.
+///
+/// Launchers disagree wildly: Pojav writes dp, Zalith 1 writes percent,
+/// Zalith 2 writes a 0..=10000 free-space fraction, FCL writes dp, and
+/// hand-edited files use 0..=1. Guessing a single scheme by key name is what
+/// left every imported button in the fallback grid, so scale on magnitude.
+fn position_to_fraction(raw: f32) -> f32 {
+    if !raw.is_finite() {
+        return 0.0;
+    }
+    let frac = if raw.abs() <= 1.0 {
+        raw
+    } else if raw.abs() <= 2.0 {
+        // 0..=1 with a stray "1.5" is far more likely a fraction than 1.5%.
+        raw / 2.0
+    } else if raw.abs() <= 100.0 {
+        raw / 100.0
+    } else if raw.abs() <= 1000.0 {
+        raw / 1000.0
+    } else {
+        raw / 10000.0
+    };
+    frac.clamp(0.0, 1.0)
+}
+
+/// Turn an unknown-unit coordinate into a pixel offset on one axis.
+///
+/// A value that fits inside the axis is taken as dp. A value larger than the
+/// axis cannot be dp — it would clamp to the screen edge — so it is read as a
+/// normalised 0..=10000 or 0..=100 scale instead. Without this, a launcher
+/// that ships coordinates on the 0..=10000 grid had every button pinned to
+/// the right/bottom edge.
+fn resolve_axis_px(raw: f32, axis_len: f32) -> f32 {
+    if !raw.is_finite() {
+        return axis_len * 0.5;
+    }
+    if raw > 0.0 && raw < 1.0 {
+        return raw * axis_len;
+    }
+    if raw <= axis_len {
+        return raw;
+    }
+    // Too big for dp. The 0..=10000 grid is the common case (Zalith 2 and
+    // most converters), so test it before the 0..=100 percent scale.
+    if raw <= 10000.0 {
+        return (raw / 10000.0) * axis_len;
+    }
+    ((raw / 100.0).min(1.0)) * axis_len
+}
+
+/// Find a coordinate for `keys` on `obj`. The button itself is checked first
+/// at every key name, then the well-known container objects (`position`,
+/// `rect`, ...), then — because launchers keep inventing nesting — any nested
+/// object a couple of levels deep. A two-element numeric array under a
+/// position-ish key (`"position": [x, y]`) is also understood.
+fn find_coord(obj: &Value, keys: &[&str], array_index: usize) -> Option<f32> {
+    fn scan(v: &Value, keys: &[&str], array_index: usize, depth: usize) -> Option<f32> {
+        let Some(map) = v.as_object() else {
+            return None;
+        };
+        for key in keys {
+            let Some(child) = map.get(*key) else {
+                continue;
+            };
+            if let Some(n) = json_f32(Some(child)) {
+                return Some(n);
+            }
+            // `"position": [x, y]` / `"pos": [x, y]`
+            if let Some(arr) = child.as_array() {
+                if arr.len() >= 2 {
+                    if let Some(n) = arr.get(array_index).and_then(|n| json_f32(Some(n))) {
+                        return Some(n);
+                    }
+                }
+            }
+            // `"position": {"value": 1200}`
+            if let Some(n) = child.get("value").and_then(|n| json_f32(Some(n))) {
+                return Some(n);
+            }
+        }
+        if depth == 0 {
+            return None;
+        }
+        // Preferred containers first so a generic scan cannot shadow them.
+        for container in POSITION_CONTAINERS {
+            if let Some(inner) = map.get(*container)
+                && let Some(n) = scan(inner, keys, array_index, depth - 1)
+            {
+                return Some(n);
+            }
+        }
+        for (name, inner) in map {
+            if POSITION_CONTAINERS.contains(&name.as_str()) {
+                continue;
+            }
+            if inner.is_object()
+                && let Some(n) = scan(inner, keys, array_index, depth - 1)
+            {
+                return Some(n);
+            }
+        }
+        None
+    }
+    scan(obj, keys, array_index, 3)
 }
 
 fn json_f32(v: Option<&Value>) -> Option<f32> {
@@ -1389,12 +1565,39 @@ fn parse_fcl_or_zalith_key(v: &Value) -> Option<String> {
     if let Ok(code) = raw.parse::<i32>() {
         return map_java_keycode(code, false);
     }
+    // Zalith 2 click events: `GLFW_KEY_W`, `GLFW_MOUSE_BUTTON_LEFT`, and
+    // `launcher.event.*` names. The KEY_/mouse strips below cover the first
+    // two; the launcher events are named directly.
+    if let Some(event) = raw.strip_prefix("launcher.event.") {
+        return match event.to_ascii_lowercase().as_str() {
+            "switch_ime" | "keyboard" => Some("special:keyboard".into()),
+            "switch_menu" | "menu" => Some("special:menu".into()),
+            "scroll_up.single" | "scroll_up" => Some("special:scroll_up".into()),
+            "scroll_down.single" | "scroll_down" => Some("special:scroll_down".into()),
+            "switch_gui" | "gui" => Some("special:gui_toggle".into()),
+            _ => None,
+        };
+    }
     if CustomButton::valid_token(raw) {
         return Some(raw.to_owned());
     }
     let upper = raw.to_ascii_uppercase();
+    // Zalith 2 writes `GLFW_KEY_W`, `GLFW_MOUSE_BUTTON_LEFT` and
+    // `GLFW_MOUSE_BUTTON_*`. Stripping only `GLFW_KEY_` left the mouse names
+    // unrecognised, so attack/use buttons were dropped from those layouts.
     let stripped = upper
         .strip_prefix("GLFW_KEY_")
+        .or_else(|| upper.strip_prefix("GLFW_MOUSE_BUTTON_"))
+        .map(|rest| {
+            // Rebuild the form the match arms expect.
+            match rest {
+                "LEFT" => "MOUSE_BUTTON_LEFT",
+                "RIGHT" => "MOUSE_BUTTON_RIGHT",
+                "MIDDLE" => "MOUSE_BUTTON_MIDDLE",
+                other => other,
+            }
+        })
+        .or_else(|| upper.strip_prefix("GLFW_"))
         .or_else(|| upper.strip_prefix("KEY_"))
         .unwrap_or(&upper);
     Some(
@@ -2588,6 +2791,116 @@ mod tests {
         // opposite sides, not nudged into the same half.
         assert!(centers[0][0] < 0.4, "Keyboard should be on the left: {:?}", centers[0]);
         assert!(centers[4][0] > 0.6, "Mouse should be on the right: {:?}", centers[4][0]);
+    }
+
+    /// Zalith Launcher 2 layout: `editorVersion` + `layers`, geometry nested
+    /// under `position: {x, y}` on a 0..=10000 free-space scale and size under
+    /// `buttonSize`. None of those keys is `x`, `y`, `dynamicX` or
+    /// `dynamicY`, so the old parser fell back for every single button and the
+    /// layout appeared as two neat columns — "towers" of controls.
+    #[test]
+    fn zalith2_nested_positions_place_every_button() {
+        let zl2 = serde_json::json!({
+            "info": { "name": { "default": "ZL2 Test" }, "author": { "default": "" },
+                      "description": { "default": "" }, "versionCode": 1, "versionName": "1.0" },
+            "editorVersion": 12,
+            "styles": [],
+            "joystickStyles": [],
+            "layers": [{
+                "name": "Layer 1", "uuid": "abc", "hide": false,
+                "hideWhenMouse": true, "hideWhenGamepad": true, "visibilityType": "always",
+                "normalButtons": [
+                    { "text": { "default": "W" }, "uuid": "b1",
+                      "position": { "x": 1200, "y": 1000 },
+                      "buttonSize": { "type": "dp", "widthDp": 50.0, "heightDp": 50.0 },
+                      "visibilityType": "always",
+                      "clickEvents": [{ "type": "key", "key": "GLFW_KEY_W" }],
+                      "isSwipple": false, "isPenetrable": false, "isToggleable": false },
+                    { "text": { "default": "S" }, "uuid": "b2",
+                      "position": { "x": 1200, "y": 6000 },
+                      "buttonSize": { "type": "dp", "widthDp": 50.0, "heightDp": 50.0 },
+                      "visibilityType": "always",
+                      "clickEvents": [{ "type": "key", "key": "GLFW_KEY_S" }],
+                      "isSwipple": false, "isPenetrable": false, "isToggleable": false },
+                    { "text": { "default": "Jump" }, "uuid": "b3",
+                      "position": { "x": 8800, "y": 7500 },
+                      "buttonSize": { "type": "dp", "widthDp": 60.0, "heightDp": 60.0 },
+                      "visibilityType": "in_game",
+                      "clickEvents": [{ "type": "key", "key": "GLFW_KEY_SPACE" }],
+                      "isSwipple": false, "isPenetrable": false, "isToggleable": false },
+                    { "text": { "default": "Attack" }, "uuid": "b4",
+                      "position": { "x": 9000, "y": 2000 },
+                      "buttonSize": { "type": "dp", "widthDp": 70.0, "heightDp": 70.0 },
+                      "visibilityType": "always",
+                      "clickEvents": [{ "type": "launcher_event", "key": "GLFW_MOUSE_BUTTON_LEFT" }],
+                      "isSwipple": false, "isPenetrable": false, "isToggleable": false },
+                ],
+                "textBoxes": [],
+                "joystickButtons": [],
+            }],
+        });
+        let imported = import_bytes(&serde_json::to_vec(&zl2).unwrap(), "zl2.json").unwrap();
+        let centers: Vec<[f32; 2]> = imported
+            .settings
+            .custom_buttons
+            .iter()
+            .map(|b| b.layouts[0].center)
+            .collect();
+        assert_eq!(centers.len(), 4, "all four ZL2 buttons must import");
+        // 1200/10000 = 0.12 of free space -> left side; 9000/10000 -> right.
+        assert!(centers[0][0] < 0.35, "W should be on the left: {:?}", centers[0]);
+        assert!(centers[1][0] < 0.35, "S should be on the left: {:?}", centers[1]);
+        assert!(centers[2][0] > 0.65, "Jump should be on the right: {:?}", centers[2]);
+        assert!(centers[3][0] > 0.65, "Attack should be on the right: {:?}", centers[3]);
+        assert!(centers[0][1] < centers[1][1], "W must sit above S");
+        assert!(centers[3][1] < centers[2][1], "Attack must sit above Jump");
+        // The spread fallback would put everything at 0.28/0.72 on a fixed
+        // ladder; a real parse yields distinct free-space fractions.
+        for (i, a) in centers.iter().enumerate() {
+            for (j, b) in centers.iter().enumerate().skip(i + 1) {
+                assert!(
+                    (a[0] - b[0]).abs() > 0.005 || (a[1] - b[1]).abs() > 0.005,
+                    "ZL2 controls {i} and {j} share a slot: {a:?} {b:?}"
+                );
+            }
+        }
+        assert_eq!(imported.meta.distinct, 4, "metadata must report 4 distinct slots");
+        // Labels come from `text.default`, not from a string `text`.
+        let keys: Vec<&str> = imported.settings.custom_buttons.iter().map(|b| b.key.as_str()).collect();
+        assert!(keys.iter().any(|k| k.contains('w')), "GLFW_KEY_W must map: {keys:?}");
+        assert!(keys.iter().any(|k| k.contains("attack")), "mouse-left must map: {keys:?}");
+    }
+
+    /// Unknown launcher schemas must still place buttons by magnitude rather
+    /// than dropping into the fallback grid: `position`-style nesting under
+    /// arbitrary container names, percent strings, and 0..=1 fractions.
+    #[test]
+    fn unknown_layout_shapes_still_get_coordinates() {
+        let odd = serde_json::json!({
+            "version": 9,
+            "mControlDataList": [
+                { "name": "A", "width": 50, "height": 50, "keycodes": [87],
+                  "rect": { "x": 0.10, "y": 0.20 } },
+                { "name": "B", "width": 50, "height": 50, "keycodes": [83],
+                  "x": "80%", "y": "70%" },
+                { "name": "C", "width": 50, "height": 50, "keycodes": [65],
+                  "positionX": 4000, "positionY": 5000 },
+                { "name": "D", "width": 50, "height": 50, "keycodes": [68],
+                  "bounds": { "left": 1500, "top": 8000 } },
+            ],
+        });
+        let imported = import_bytes(&serde_json::to_vec(&odd).unwrap(), "odd.json").unwrap();
+        assert_eq!(imported.meta.buttons, 4);
+        assert_eq!(
+            imported.meta.distinct, 4,
+            "every odd-shaped button needs its own slot, got {:?}",
+            imported
+                .settings
+                .custom_buttons
+                .iter()
+                .map(|b| b.layouts[0].center)
+                .collect::<Vec<_>>()
+        );
     }
 
     /// A Pojav file with no `displayInMenu` field means "show on menu
