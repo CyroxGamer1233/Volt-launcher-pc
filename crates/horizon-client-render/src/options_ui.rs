@@ -4706,8 +4706,8 @@ impl OptionsUi {
                 [
                     search.x - 4.0,
                     search.y - 3.0,
-                    search.w + 8.0,
-                    search.h + 6.0,
+                    search.width + 8.0,
+                    search.height + 6.0,
                 ],
             );
             search.draw(batch, atlas, None);

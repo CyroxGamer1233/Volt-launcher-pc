@@ -2519,7 +2519,14 @@ impl Item {
             | VoltShaderBloom
             | VoltShaderSunRays
             | VoltShaderVignette
-            | MergeDropped => {
+            | MergeDropped
+            // Volt Feel knobs and the V badge have no master switch of their
+            // own: they act on whatever they control, on or off.
+            | MotionBlurStrength
+            | HitRegReadout
+            | VoltBadgeShow
+            | VoltBadgeSize
+            | VoltBadgeOpacity => {
                 return None;
             }
         })
