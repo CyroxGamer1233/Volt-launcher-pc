@@ -62,6 +62,7 @@ jobs:
         env:
           EVENT_NAME: ${{ github.event_name }}
           REF_NAME: ${{ github.ref }}
+          COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
           INPUT_ABIS: ${{ inputs.abis }}
           INPUT_PROFILE: ${{ inputs.profile }}
           INPUT_PUBLISH: ${{ inputs.publish_release }}
@@ -79,6 +80,11 @@ jobs:
 
           event = os.environ["EVENT_NAME"]
           ref = os.environ["REF_NAME"]
+          # A commit can ask for a publishable build by putting
+          # `[publish-release]` in its message. Artifacts on a session branch
+          # are otherwise not downloadable without signing in, so the rolling
+          # `debug` release is the only way to hand a player an APK.
+          message = os.environ.get("COMMIT_MESSAGE", "")
           raw_abis = os.environ.get("INPUT_ABIS", "").strip()
           profile = os.environ.get("INPUT_PROFILE", "").strip() or "release"
           input_publish = os.environ.get("INPUT_PUBLISH", "").strip().lower() == "true"
@@ -102,7 +108,13 @@ jobs:
           # release job deploys rolling debug builds only and never marks them
           # pre-release, so players never see a pre-release channel.
           is_android = ref == "refs/heads/android"
-          publish_release = is_android or ref.startswith("refs/tags/v") or (event == "workflow_dispatch" and input_publish)
+          asked = "[publish-release]" in message and event != "pull_request"
+          publish_release = (
+              is_android
+              or ref.startswith("refs/tags/v")
+              or (event == "workflow_dispatch" and input_publish)
+              or asked
+          )
 
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as out:
               out.write(f"matrix={json.dumps({'include': include})}\n")

@@ -174,6 +174,9 @@ pub struct TouchControls {
     pub holding: bool,
     pub break_progress: f32,
     last_marker: Option<([f32; 2], Instant)>,
+    /// Set when the overlay (O) button is held down: the menu opens on release.
+    /// A short tap still toggles the overlay as before.
+    pub overlay_menu_open: bool,
     /// When the on-screen sneak button was last pressed. The pad merge uses
     /// it to force toggle behavior for touch-origin sneaks, even when the
     /// controller's stick-click is configured as hold-to-sneak.
@@ -579,9 +582,37 @@ impl TouchControls {
             self.draw_editor(b, a);
         } else if let Some(point) = self.pointer() {
             let center = [point[0] * w, point[1] * h];
-            let radius = self.settings.circle_size / 2.0;
-            ring(b, a, center, radius + 0.7, rgba(0, 0, 0, 110));
-            ring(b, a, center, radius, rgba(255, 255, 255, 210));
+            // The Mouse Settings page scales the ring and fades it, so a player
+            // can make the cursor easier to see (or get it out of the way).
+            let radius = self.settings.circle_size / 2.0 * self.settings.pointer_scale;
+            let alpha =
+                |base: u8| ((f32::from(base) * self.settings.pointer_opacity) as u8).max(8);
+            // Mouse Settings > Cursor style: a ring, a dot, a cross, or nothing
+            // at all, so the pointer can be as loud or as quiet as the player
+            // wants on a small screen.
+            match self.settings.pointer_style {
+                1 => {
+                    let r = (radius * 0.22).max(1.5);
+                    ring(b, a, center, r + 0.7, rgba(0, 0, 0, alpha(110)));
+                    ring(b, a, center, r, rgba(255, 255, 255, alpha(210)));
+                }
+                2 => {
+                    let arm = radius.max(3.0);
+                    let gap = (arm * 0.28).max(1.5);
+                    for (dx, dy) in [(1.0, 0.0), (-1.0, 0.0), (0.0, 1.0), (0.0, -1.0)] {
+                        let (x0, y0) = (center[0] + dx * gap, center[1] + dy * gap);
+                        let (x1, y1) = (center[0] + dx * arm, center[1] + dy * arm);
+                        b.fill(a, x0.min(x1), y0.min(y1) - 0.5,
+                            (x1 - x0).abs().max(1.0), (y1 - y0).abs().max(1.0),
+                            rgba(255, 255, 255, alpha(210)));
+                    }
+                }
+                3 => {}
+                _ => {
+                    ring(b, a, center, radius + 0.7, rgba(0, 0, 0, alpha(110)));
+                    ring(b, a, center, radius, rgba(255, 255, 255, alpha(210)));
+                }
+            }
             // A complete inner circle expands towards the stationary outer rim.
             // Progress changes its radius, never its angular coverage.
             let inner = mining_radius(radius, self.break_progress);

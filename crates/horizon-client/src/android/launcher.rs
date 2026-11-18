@@ -381,6 +381,11 @@ impl Launcher {
                 };
                 let atlas = &gui.atlas;
                 atlas.font.reset_cache();
+                // The launcher's own glyph cache points into this atlas too. A
+                // rebuild can land on the same address with different pixels,
+                // so drop it as well or every cached glyph samples the new
+                // atlas at an old rect and text turns into block texture.
+                horizon_client::ui_theme::reset_atlas();
                 renderer.replace_ui_textures(
                     (&atlas.pixels, atlas.width, atlas.height),
                     (&atlas.glint.0, atlas.glint.1, atlas.glint.2),
@@ -418,6 +423,8 @@ impl Launcher {
         };
         let atlas = &gui.atlas;
         atlas.font.reset_cache();
+        // As above: the cached glyph rects belong to the atlas being replaced.
+        horizon_client::ui_theme::reset_atlas();
         renderer.replace_ui_textures(
             (&atlas.pixels, atlas.width, atlas.height),
             (&atlas.glint.0, atlas.glint.1, atlas.glint.2),

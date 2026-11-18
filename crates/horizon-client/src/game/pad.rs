@@ -142,7 +142,10 @@ impl Game<'_> {
     /// else; the open hub window and the editors keep the screen clean.
     #[cfg(target_os = "android")]
     pub(super) fn android_title_controls(&self) -> bool {
-        self.title.is_some()
+        // The title screen, and the in-world pause menu: both put a menu over
+        // the world, and leaving the movement overlay drawn underneath covers
+        // the very buttons the menu is asking the player to press.
+        (self.title.is_some() || self.screen == Screen::Paused)
             && !self.touch_editing()
             && !self.volt_hub.open
             && !self.volt_studio_open()

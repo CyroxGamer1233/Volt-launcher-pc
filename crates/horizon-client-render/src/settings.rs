@@ -844,6 +844,13 @@ pub enum Opt {
     TouchSprintToggle,
     TouchInventoryControls,
     TouchMouseSensitivity,
+    /// Mouse Settings: the virtual-mouse ring's size and opacity.
+    TouchPointerScale,
+    TouchPointerOpacity,
+    /// Mouse Settings: how finely the virtual mouse tracks the thumb.
+    TouchPointerAccuracy,
+    /// Mouse Settings: the crosshair style under the pointer.
+    TouchPointerStyle,
     TouchCrosshairGestures,
     AndroidGyroscope,
     AndroidGyroSensitivity,

@@ -460,6 +460,21 @@ pub fn merge_with_neighbours(
     i: usize,
     max_stack: &dyn Fn(&ItemStack) -> u32,
 ) {
+    merge_within_neighbours(items, removed, cells, i, max_stack, 0.5);
+}
+/// `ItemEntity.mergeWithNeighbours`, searching `inflate` blocks around the item
+/// rather than vanilla's half block. Volt's "Merge drop stacks" raises it so a
+/// floor covered in separate drops collapses into a few full stacks instead of
+/// hundreds of entities; the merge rules themselves are untouched, so nothing
+/// merges that vanilla would not have merged had the drops been touching.
+pub fn merge_within_neighbours(
+    items: &mut [ItemEntity],
+    removed: &mut [bool],
+    cells: &mut ItemCells,
+    i: usize,
+    max_stack: &dyn Fn(&ItemStack) -> u32,
+    inflate: f64,
+) {
     let age = |items: &[ItemEntity], j: usize| {
         if j == i {
             items[j].age - 1
@@ -470,7 +485,7 @@ pub fn merge_with_neighbours(
     if removed[i] || !items[i].mergeable(age(items, i), max_stack(&items[i].stack)) {
         return;
     }
-    let area = items[i].bounds().inflate(Vec3::new(0.5, 0.0, 0.5));
+    let area = items[i].bounds().inflate(Vec3::new(inflate, 0.0, inflate));
     let mut near = Vec::new();
     cells.near(area, &mut near);
     for j in near {

@@ -286,6 +286,7 @@ fn import_pojav(v: &Value, title: String) -> Result<ImportedControlLayout, Strin
                 legacy_lwjgl2,
                 None,
                 None,
+                custom_buttons.len(),
             ) {
                 custom_buttons.push(btn);
             }
@@ -300,7 +301,7 @@ fn import_pojav(v: &Value, title: String) -> Result<ImportedControlLayout, Strin
             let drawer_id = (idx + 1).min(u16::MAX as usize) as u16;
             let props = drawer.get("properties").unwrap_or(drawer);
             let (parent_x, parent_y, parent_w, parent_h) =
-                pojav_box(props, ref_w, ref_h, dp_px, px_scale, scaled_at);
+                pojav_box(props, ref_w, ref_h, dp_px, px_scale, scaled_at, idx + 1);
             if let Some(mut parent_btn) = parse_pojav_button(
                 props,
                 ref_w,
@@ -311,6 +312,7 @@ fn import_pojav(v: &Value, title: String) -> Result<ImportedControlLayout, Strin
                 legacy_lwjgl2,
                 None,
                 Some(format!("special:drawer:{drawer_id}")),
+                idx + 1,
             ) {
                 if parent_btn.label.as_deref().unwrap_or_default().is_empty() {
                     parent_btn.label = Some("≡".into());
@@ -350,6 +352,7 @@ fn import_pojav(v: &Value, title: String) -> Result<ImportedControlLayout, Strin
                         legacy_lwjgl2,
                         override_pos,
                         None,
+                        custom_buttons.len(),
                     ) {
                         child_btn.drawer_parent = Some(drawer_id);
                         custom_buttons.push(child_btn);
@@ -363,7 +366,7 @@ fn import_pojav(v: &Value, title: String) -> Result<ImportedControlLayout, Strin
     if let Some(sticks) = v.get("mJoystickDataList").and_then(Value::as_array)
         && let Some(stick) = sticks.first()
     {
-        let (jx, jy, jw, jh) = pojav_box(stick, ref_w, ref_h, dp_px, px_scale, scaled_at);
+        let (jx, jy, jw, jh) = pojav_box(stick, ref_w, ref_h, dp_px, px_scale, scaled_at, 0);
         let size = (jh.max(jw) / ref_h).clamp(0.12, 0.45);
         let cx = ((jx + jw * 0.5) / ref_w).clamp(0.05, 0.95);
         let cy = ((jy + jh * 0.5) / ref_h).clamp(0.05, 0.95);
@@ -448,6 +451,23 @@ fn drawer_orientation(v: Option<&Value>) -> DrawerDir {
     DrawerDir::Free
 }
 
+/// A button with no position of its own still has to land somewhere.
+///
+/// It used to land at exact screen centre, which stacked every such button
+/// on one spot and read as "all my controls teleported to the middle".
+/// Spreading them round a ring keeps each one findable and draggable.
+fn spread_fallback(axis_len: f32, side: f32, seed: usize, horizontal: bool) -> f32 {
+    // Deterministic, so re-importing the same file always gives the same
+    // layout: alternate between two columns and step down a row per seed.
+    let start = if horizontal {
+        axis_len * if seed % 2 == 0 { 0.28 } else { 0.72 }
+    } else {
+        axis_len * (0.14 + (seed % 8) as f32 * 0.09)
+    };
+    let margin = axis_len * 0.02;
+    (start - side * 0.5).clamp(margin, (axis_len - side - margin).max(margin))
+}
+
 fn pojav_box(
     obj: &Value,
     ref_w: f32,
@@ -455,6 +475,7 @@ fn pojav_box(
     dp_px: f32,
     px_scale: f32,
     scaled_at: f32,
+    seed: usize,
 ) -> (f32, f32, f32, f32) {
     let raw_w = json_f32(obj.get("width")).unwrap_or(50.0).max(8.0) * dp_px;
     let raw_h = json_f32(obj.get("height")).unwrap_or(50.0).max(8.0) * dp_px;
@@ -472,13 +493,13 @@ fn pojav_box(
         .and_then(Value::as_str)
         .and_then(|s| eval_dynamic_expr(s, &vars, ref_w))
         .or_else(|| json_f32(obj.get("x")).map(|x| if x <= 1.0 && x >= 0.0 && raw_w < ref_w * 0.5 && obj.get("dynamicX").is_none() && x.fract() != 0.0 { x * ref_w } else { x }))
-        .unwrap_or(ref_w * 0.5 - raw_w * 0.5);
+        .unwrap_or_else(|| spread_fallback(ref_w, raw_w, seed, true));
     let y = obj
         .get("dynamicY")
         .and_then(Value::as_str)
         .and_then(|s| eval_dynamic_expr(s, &vars, ref_h))
         .or_else(|| json_f32(obj.get("y")).map(|y| if y <= 1.0 && y >= 0.0 && raw_h < ref_h * 0.5 && obj.get("dynamicY").is_none() && y.fract() != 0.0 { y * ref_h } else { y }))
-        .unwrap_or(ref_h * 0.5 - raw_h * 0.5);
+        .unwrap_or_else(|| spread_fallback(ref_h, raw_h, seed, false));
     (x, y, raw_w, raw_h)
 }
 
@@ -493,6 +514,7 @@ fn parse_pojav_button(
     legacy_lwjgl2: bool,
     override_box: Option<(f32, f32, f32, f32)>,
     override_token: Option<String>,
+    seed: usize,
 ) -> Option<CustomButton> {
     let mut tokens: Vec<String> = Vec::new();
     if let Some(tok) = override_token {
@@ -522,7 +544,9 @@ fn parse_pojav_button(
     }
 
     let (x, y, bw, bh) =
-        override_box.unwrap_or_else(|| pojav_box(obj, ref_w, ref_h, dp_px, px_scale, scaled_at));
+        override_box.unwrap_or_else(|| {
+            pojav_box(obj, ref_w, ref_h, dp_px, px_scale, scaled_at, seed)
+        });
     let norm_h = (bh / ref_h).clamp(0.025, 0.55);
     let width_ratio = (bw / bh.max(1.0)).clamp(0.2, 8.0);
     let cx = ((x + bw * 0.5) / ref_w).clamp(0.01, 0.99);
@@ -683,7 +707,9 @@ fn parse_fcl_view_data(
             if custom_buttons.len() >= MAX_CUSTOM_BUTTONS {
                 break;
             }
-            if let Some(mut parsed) = parse_fcl_button(btn, group_id_map) {
+            if let Some(mut parsed) =
+                parse_fcl_button(btn, group_id_map, custom_buttons.len())
+            {
                 parsed.drawer_parent = drawer_parent;
                 custom_buttons.push(parsed);
             }
@@ -694,7 +720,7 @@ fn parse_fcl_view_data(
         && let Some(dir) = dirs.first()
     {
         let base = dir.get("baseInfo").unwrap_or(dir);
-        let (cx, cy, _, norm_h, opacity, _, _) = parse_fcl_base_info(base, 0.28);
+        let (cx, cy, _, norm_h, opacity, _, _) = parse_fcl_base_info(base, 0.28, 0);
         let style_dpad = dir
             .get("styleType")
             .and_then(Value::as_str)
@@ -716,7 +742,11 @@ fn parse_fcl_view_data(
     }
 }
 
-fn parse_fcl_base_info(base: &Value, fallback_h: f32) -> (f32, f32, f32, f32, f32, bool, bool) {
+fn parse_fcl_base_info(
+    base: &Value,
+    fallback_h: f32,
+    seed: usize,
+) -> (f32, f32, f32, f32, f32, bool, bool) {
     let size_type = base
         .get("sizeType")
         .and_then(Value::as_str)
@@ -742,10 +772,19 @@ fn parse_fcl_base_info(base: &Value, fallback_h: f32) -> (f32, f32, f32, f32, f3
     } else {
         fallback_h
     };
-    let rx = json_f32(base.get("xPosition").or_else(|| base.get("x"))).unwrap_or(500.0);
-    let ry = json_f32(base.get("yPosition").or_else(|| base.get("y"))).unwrap_or(500.0);
-    let tx = if rx > 1.0 { rx / 1000.0 } else { rx }.clamp(0.0, 1.0);
-    let ty = if ry > 1.0 { ry / 1000.0 } else { ry }.clamp(0.0, 1.0);
+    // A control with no stored position must not land at dead centre, where
+    // every such control stacks on one spot ("everything teleported to the
+    // middle"). Spreading sends it to a free-ish slot instead.
+    let rx = json_f32(base.get("xPosition").or_else(|| base.get("x")));
+    let ry = json_f32(base.get("yPosition").or_else(|| base.get("y")));
+    let tx = rx
+        .map(|v| if v > 1.0 { v / 1000.0 } else { v })
+        .unwrap_or_else(|| if seed % 2 == 0 { 0.28 } else { 0.72 })
+        .clamp(0.0, 1.0);
+    let ty = ry
+        .map(|v| if v > 1.0 { v / 1000.0 } else { v })
+        .unwrap_or_else(|| 0.14 + (seed % 8) as f32 * 0.09)
+        .clamp(0.0, 1.0);
     let left = (1.0 - norm_w) * tx;
     let top = (1.0 - norm_h) * ty;
     let cx = (left + norm_w * 0.5).clamp(0.01, 0.99);
@@ -764,9 +803,11 @@ fn parse_fcl_base_info(base: &Value, fallback_h: f32) -> (f32, f32, f32, f32, f3
 fn parse_fcl_button(
     btn: &Value,
     group_id_map: &std::collections::BTreeMap<String, u16>,
+    seed: usize,
 ) -> Option<CustomButton> {
     let base = btn.get("baseInfo").unwrap_or(btn);
-    let (cx, cy, width_ratio, norm_h, opacity, in_game, in_menu) = parse_fcl_base_info(base, 0.12);
+    let (cx, cy, width_ratio, norm_h, opacity, in_game, in_menu) =
+        parse_fcl_base_info(base, 0.12, seed);
     let event = btn.get("event").unwrap_or(btn);
     let press = event.get("pressEvent").unwrap_or(event);
 
@@ -2305,6 +2346,52 @@ mod tests {
     /// from Pojav's `ControlData.fillConversionMap` (dpToPx(width), margin =
     /// dpToPx(2), right = screen - width). Before the fix these buttons all
     /// clamped to screen edges.
+    /// A control with no stored position used to land at exact screen centre,
+    /// so every such control stacked on one spot. Nothing may sit dead centre
+    /// unless the file actually says so.
+    #[test]
+    fn unpositioned_controls_do_not_all_stack_in_the_middle() {
+        let pojav = serde_json::json!({
+            "version": 5,
+            "scaledAt": 100.0,
+            "mControlDataList": [
+                // No x, y, dynamicX or dynamicY at all.
+                { "name": "A", "width": 50.0, "height": 50.0, "keycodes": [32] },
+                { "name": "B", "width": 50.0, "height": 50.0, "keycodes": [340] },
+                { "name": "C", "width": 50.0, "height": 50.0, "keycodes": [69] },
+            ],
+        });
+        let imported =
+            import_bytes(&serde_json::to_vec(&pojav).unwrap(), "NoPos.json").unwrap();
+        let centers: Vec<[f32; 2]> = imported
+            .settings
+            .custom_buttons
+            .iter()
+            .map(|b| b.layouts[0].center)
+            .collect();
+        assert_eq!(centers.len(), 3);
+        for c in &centers {
+            assert!(
+                (c[0] - 0.5).abs() > 0.02 || (c[1] - 0.5).abs() > 0.02,
+                "control landed at dead centre: {c:?}"
+            );
+        }
+        // And they must not all share one slot either.
+        for (i, a) in centers.iter().enumerate() {
+            for b in &centers[i + 1..] {
+                assert!(
+                    (a[0] - b[0]).abs() > 0.01 || (a[1] - b[1]).abs() > 0.01,
+                    "two unpositioned controls share a slot: {a:?} {b:?}"
+                );
+            }
+        }
+        // Whatever the fallback, everything stays on screen.
+        for c in &centers {
+            assert!((0.0..=1.0).contains(&c[0]), "off screen x: {c:?}");
+            assert!((0.0..=1.0).contains(&c[1]), "off screen y: {c:?}");
+        }
+    }
+
     #[test]
     fn pojav_stock_default_layout_imports_one_to_one() {
         let bytes = include_bytes!("fixtures/pojav-default.json");

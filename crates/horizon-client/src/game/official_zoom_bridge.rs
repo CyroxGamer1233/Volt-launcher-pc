@@ -12,7 +12,14 @@ impl Game<'_> {
     pub(super) fn bundled_zoom_list(&self, mods: &mut Vec<NativeMod>) {
         use super::official_zoom as zoom;
         zoom::reset();
+        // Installed and switched on: listed so the player can find the switch,
+        // but not running until they turn it on.
+        let on = Self::options_path()
+            .parent()
+            .map(horizon_client::mod_list::ModList::load)
+            .unwrap_or_default();
         if Self::options_path().parent().is_some_and(horizon_client::bundled_native::zoom_installed)
+            && on.enabled.contains(zoom::ID)
             && !mods.iter().any(|m| m.id == zoom::ID)
         {
             mods.push(NativeMod {

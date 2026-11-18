@@ -14,6 +14,13 @@ ANDROID_RESULT_BRIDGE = "packaging/android/java/dev/horizon/android/HorizonActiv
 ANDROID_DOCUMENTS_BRIDGE = "packaging/android/java/dev/horizon/android/HorizonDocumentsProvider.java"
 # Original Discord Rich Presence bridge (THIRD_PARTY_NOTICES.md); not recovered game code.
 ANDROID_DISCORD_BRIDGE = "packaging/android/java/dev/horizon/android/VoltDiscordRpc.java"
+# The same three bridges under the package name the brief rebrand used, so
+# `--history` still allows the revisions that already exist.
+ANDROID_BRIDGES_UNDER_OLD_PACKAGE = {
+    "packaging/android/java/dev/volt/launcher/VoltActivity.java",
+    "packaging/android/java/dev/volt/launcher/VoltDocumentsProvider.java",
+    "packaging/android/java/dev/volt/launcher/VoltDiscordRpc.java",
+}
 
 
 def prohibited(path):
@@ -26,11 +33,24 @@ def prohibited(path):
     if any(part in {".local", ".gradle", "node_modules", "__pycache__"} for part in parsed.parts):
         return True
     # Original JDK-only tools are an exact allowlist; recovered game Java stays private.
-    if path in ORIGINAL_JDK_TOOLS or path in {ANDROID_RESULT_BRIDGE, ANDROID_DOCUMENTS_BRIDGE, ANDROID_DISCORD_BRIDGE}:
+    bridges = {
+        ANDROID_RESULT_BRIDGE,
+        ANDROID_DOCUMENTS_BRIDGE,
+        ANDROID_DISCORD_BRIDGE,
+    } | ANDROID_BRIDGES_UNDER_OLD_PACKAGE
+    if path in ORIGINAL_JDK_TOOLS or path in bridges:
         return False
-    # Original Horizon mod sources may also be tracked.
-    if parsed.suffix == ".java" and path.startswith(("mods/horizon/src/", "mods/horizon-lab/src/")):
-        return not ("/dev/horizonlab/" in path)
+    # Original mod sources may also be tracked. Both spellings are allowed
+    # because `--history` walks every revision: the tree was renamed to `volt`
+    # for a while and that history is still reachable from the `debug` tag, so
+    # a check that only knew the current name would reject its own past.
+    if parsed.suffix == ".java" and path.startswith(
+        ("mods/horizon/src/", "mods/horizon-lab/src/", "mods/volt/src/", "mods/volt-lab/src/")
+    ):
+        # Recovered game code lives under the labs parity packages and stays
+        # private, under either spelling: `--history` walks revisions from
+        # before and after the brief rebrand.
+        return not ("/dev/horizonlab/" in path or "/dev/voltlabs/" in path)
     return bool(parsed.parts and parsed.parts[0] in PRIVATE_ROOTS) or parsed.suffix.lower() in PRIVATE_EXTENSIONS
 
 

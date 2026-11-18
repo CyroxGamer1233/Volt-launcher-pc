@@ -1760,12 +1760,32 @@ impl DrawCtx<'_> {
             self.targets.insert(0, (slab, Action::Play));
         }
 
-        // Error line floating above the pill.
+        // Error banner floating above the pill. A download failure writes a full
+        // sentence, and fitting that to one line shrank it to an ellipsis
+        // nobody could read - so wrap it onto a card.
         if !installing && let Some(error) = self.error.as_deref() {
-            let e = ui.fit_text(Face::LauncherRegular, 11.5, error, w - 2.0 * m - 40.0);
-            let ew = ui.measure(Face::LauncherRegular, 11.5, &e);
-            ui.text(Face::LauncherRegular, 11.5, ax + (w - ew) * 0.5, py0 - 20.0,
-                theme::STATUS_BAD(), &e);
+            // One width drives both: wrap to the card's inner width so the
+            // centring below is exact rather than a few pixels off.
+            let pad = 9.0;
+            let box_w = (w - 2.0 * m - 24.0).max(120.0);
+            let lines = wrap_lines(ui, Face::LauncherRegular, 11.5, error, box_w - pad * 2.0, 6);
+            let line_h = 15.0;
+            let box_h = pad * 2.0 + lines.len() as f32 * line_h;
+            let box_x = ax + m;
+            let box_y = py0 - 14.0 - box_h;
+            ui.rounded(box_x, box_y, box_w, box_h, 10.0, theme::GLASS());
+            ui.border(box_x, box_y, box_w, box_h, 10.0, hex(0xffffff, 26));
+            for (i, line) in lines.iter().enumerate() {
+                let lw = ui.measure(Face::LauncherRegular, 11.5, line);
+                ui.text(
+                    Face::LauncherRegular,
+                    11.5,
+                    box_x + (box_w - lw) * 0.5,
+                    box_y + pad + i as f32 * line_h,
+                    theme::STATUS_BAD(),
+                    line,
+                );
+            }
         }
 
         // ---- Quiet utility chips: a spaced row along the bottom, between

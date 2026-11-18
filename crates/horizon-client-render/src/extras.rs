@@ -168,6 +168,10 @@ pub struct Extras {
     pub frame_players_distance: FrameDistance,
     pub frame_dropped: bool,
     pub frame_dropped_distance: FrameDistance,
+    /// Merge nearby identical dropped stacks into one entity (64 items each),
+    /// so a full floor of drops is 32 entities rather than hundreds. Only safe
+    /// where this client owns the world: singleplayer and LAN.
+    pub merge_dropped: bool,
     pub frame_block_entities: bool,
     pub frame_block_entities_distance: FrameDistance,
     pub frame_particles: bool,
@@ -295,6 +299,7 @@ impl Default for Extras {
             frame_players_distance: FrameDistance::Unlimited,
             frame_dropped: true,
             frame_dropped_distance: FrameDistance::Unlimited,
+            merge_dropped: false,
             frame_block_entities: true,
             frame_block_entities_distance: FrameDistance::Unlimited,
             frame_particles: true,
@@ -505,6 +510,7 @@ impl Extras {
                     }
                 }
                 "voltFrameDropped" => e.frame_dropped = flag(e.frame_dropped),
+                "voltMergeDropped" => e.merge_dropped = flag(e.merge_dropped),
                 "voltFrameDroppedDist" => {
                     if let Some(v) = FrameDistance::parse(value) {
                         e.frame_dropped_distance = v;
@@ -1113,6 +1119,7 @@ impl Extras {
         push("voltFrameMobsDist", self.frame_mobs_distance.as_str());
         push("voltFramePlayers", bool_text(self.frame_players));
         push("voltFramePlayersDist", self.frame_players_distance.as_str());
+        push("voltMergeDropped", bool_text(self.merge_dropped));
         push("voltFrameDropped", bool_text(self.frame_dropped));
         push("voltFrameDroppedDist", self.frame_dropped_distance.as_str());
         push("voltFrameBlockEntities", bool_text(self.frame_block_entities));
@@ -1950,6 +1957,8 @@ pub enum Item {
     FramePlayersDistance,
     FrameDropped,
     FrameDroppedDistance,
+    /// Volt Boost > Entities: merge identical drops across a wider search.
+    MergeDropped,
     FrameBlockEntities,
     FrameBlockEntitiesDistance,
     FrameParticles,
@@ -2166,6 +2175,7 @@ pub fn volt_boost_rows() -> Vec<Result<Item, &'static str>> {
         Err("Tier 1 & 3 - Entities, Block Entities & Hub Shield"),
         Ok(VoltEntityCap),
         Ok(VoltItemCap),
+        Ok(MergeDropped),
         Ok(VoltBlockEntityCap),
         Ok(VoltCullSignText),
         Ok(VoltFastShadows),
@@ -2272,6 +2282,7 @@ impl Item {
             Item::FramePlayersDistance => "Player distance",
             Item::FrameDropped => "Dropped items",
             Item::FrameDroppedDistance => "Dropped item distance",
+            Item::MergeDropped => "Merge drop stacks",
             Item::FrameBlockEntities => "Block entities",
             Item::FrameBlockEntitiesDistance => "Block-entity distance",
             Item::FrameParticles => "Particles",
@@ -2442,7 +2453,8 @@ impl Item {
             | VoltShaderTonemap
             | VoltShaderBloom
             | VoltShaderSunRays
-            | VoltShaderVignette => {
+            | VoltShaderVignette
+            | MergeDropped => {
                 return None;
             }
         })
@@ -2616,6 +2628,9 @@ impl Item {
             }
             Item::FrameDroppedDistance => {
                 "Farthest distance a dropped item still draws at. Unlimited keeps vanilla range."
+            }
+            Item::MergeDropped => {
+                "Pulls identical drops three blocks together instead of vanilla's half block, so a floor of separate drops becomes a few full stacks of 64. Same rules as vanilla: same item, same contents, same owner."
             }
             Item::FrameBlockEntities => {
                 "Renders chests, signs, banners, skulls, beds and other block entities. Off hides their models."
@@ -2825,6 +2840,7 @@ impl Item {
             Item::FrameMobs => e.frame_mobs,
             Item::FramePlayers => e.frame_players,
             Item::FrameDropped => e.frame_dropped,
+            Item::MergeDropped => e.merge_dropped,
             Item::FrameBlockEntities => e.frame_block_entities,
             Item::FrameParticles => e.frame_particles,
             Item::VoltCullLeaves => e.cull_leaves,
@@ -3062,6 +3078,7 @@ impl Item {
             Item::FramePlayersDistance => {
                 e.frame_players_distance = step(&FrameDistance::ALL, e.frame_players_distance, back)
             }
+            Item::MergeDropped => e.merge_dropped = !e.merge_dropped,
             Item::FrameDropped => e.frame_dropped = !e.frame_dropped,
             Item::FrameDroppedDistance => {
                 e.frame_dropped_distance = step(&FrameDistance::ALL, e.frame_dropped_distance, back)

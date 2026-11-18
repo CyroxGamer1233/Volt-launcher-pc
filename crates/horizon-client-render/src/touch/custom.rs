@@ -3,6 +3,9 @@ use super::*;
 use layout::Placement;
 use serde::{Deserialize, Serialize};
 
+/// How long the overlay (O) button must be held to open its configure menu.
+const OVERLAY_MENU_HOLD: std::time::Duration = std::time::Duration::from_secs(3);
+
 fn default_true() -> bool {
     true
 }
@@ -80,6 +83,8 @@ pub(super) struct CustomFinger {
     pub start: [f32; 2],
     pub previous: [f32; 2],
     pub dragged: bool,
+    /// When the finger went down, so a long press can be told from a tap.
+    pub since: std::time::Instant,
 }
 
 impl CustomButton {
@@ -281,6 +286,7 @@ impl TouchControls {
                     start: point,
                     previous: point,
                     dragged: false,
+                    since: std::time::Instant::now(),
                 },
             );
             self.fingers.insert(id, (Role::Ignore, point));
@@ -443,6 +449,24 @@ impl TouchControls {
     ) -> Option<[f32; 2]> {
         if self.custom_fingers.contains_key(&id) {
             if ended {
+                // A long press on the overlay (O) button opens the configure
+                // menu instead of toggling, so hiding, sizing and fading the
+                // overlay all live behind one button.
+                let long_press = self.custom_fingers.get(&id).is_some_and(|finger| {
+                    let on_overlay = finger.button_index.is_some_and(|i| {
+                        let button = &self.settings.custom_buttons[i];
+                        std::iter::once(button.key.as_str())
+                            .chain(button.extra_keys.iter().map(String::as_str))
+                            .any(|token| token == "special:gui_toggle")
+                    });
+                    on_overlay && !finger.dragged && finger.since.elapsed() >= OVERLAY_MENU_HOLD
+                });
+                if long_press {
+                    self.overlay_menu_open = true;
+                    // The press already flipped the overlay; a long press asks
+                    // for the menu, not a toggle, so put it back.
+                    self.controls_hidden = !self.controls_hidden;
+                }
                 self.custom_fingers.remove(&id);
                 self.fingers.remove(&id);
                 self.sync_custom_tokens();
@@ -519,6 +543,7 @@ impl TouchControls {
                     start: point,
                     previous: point,
                     dragged: false,
+                    since: std::time::Instant::now(),
                 },
             );
             self.fingers.insert(id, (Role::Ignore, point));

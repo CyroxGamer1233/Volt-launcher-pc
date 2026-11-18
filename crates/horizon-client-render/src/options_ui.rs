@@ -122,6 +122,25 @@ pub(crate) const MOUSE_OPTIONS: &[Opt] = &[
     Opt::AllowCursorChanges,
 ];
 
+/// The Mouse Settings page: everything about the on-screen mouse, in one
+/// place. The speed sides are the virtual-mouse stick; size and opacity are the
+/// ring drawn under the pointer.
+#[cfg(target_os = "android")]
+pub(crate) const MOUSE_SETTINGS_OPTIONS: &[Opt] = &[
+    Opt::TouchMouseSensitivity,
+    Opt::TouchSensitivityHorizontal,
+    Opt::TouchSensitivityVertical,
+    Opt::TouchPointerScale,
+    Opt::TouchPointerOpacity,
+    Opt::TouchPointerAccuracy,
+    Opt::TouchPointerStyle,
+    Opt::TouchButtonScale,
+    Opt::TouchCrosshairGestures,
+    Opt::TouchInteract,
+];
+#[cfg(not(target_os = "android"))]
+pub(crate) const MOUSE_SETTINGS_OPTIONS: &[Opt] = &[Opt::Sensitivity, Opt::WheelSensitivity];
+
 impl Opt {
     /// Keep controls visible while their underlying systems are still missing.
     pub(crate) fn available(self) -> bool {
@@ -193,6 +212,10 @@ impl Opt {
             Opt::TouchMode => "Control scheme",
             Opt::TouchCrosshairGestures => "Touch gestures",
             Opt::TouchMouseSensitivity => "Virtual mouse sensitivity",
+            Opt::TouchPointerScale => "Cursor size",
+            Opt::TouchPointerOpacity => "Cursor opacity",
+            Opt::TouchPointerAccuracy => "Cursor accuracy",
+            Opt::TouchPointerStyle => "Cursor style",
             Opt::TouchAnalog => "360-degree movement",
             Opt::TouchCircleSize => "Touch circle size",
             Opt::TouchAttackSide => "Attack indicator side",
@@ -371,6 +394,12 @@ impl Opt {
             Opt::TouchSensitivityHorizontal => unit(s.touch.sensitivity_horizontal, 0.1, 3.0),
             Opt::TouchSensitivityVertical => unit(s.touch.sensitivity_vertical, 0.1, 3.0),
             Opt::TouchMouseSensitivity => unit(s.touch.virtual_mouse_sensitivity, 0.25, 3.0),
+            Opt::TouchPointerScale => unit(s.touch.pointer_scale, 0.5, 2.5),
+            Opt::TouchPointerOpacity => unit(s.touch.pointer_opacity, 0.15, 1.0),
+            Opt::TouchPointerAccuracy => unit(s.touch.pointer_accuracy, 0.2, 1.0),
+            Opt::TouchPointerStyle => {
+                Kind::Slider(f32::from(s.touch.pointer_style.min(3)) / 3.0)
+            }
             Opt::TouchButtonScale => unit(s.touch.button_scale, 0.5, 2.0),
             Opt::Fov => unit(s.fov, 30.0, 110.0),
             Opt::RenderDistance => unit(
@@ -553,6 +582,20 @@ impl Opt {
             Opt::TouchMouseSensitivity => {
                 Some(format!("{:.0}%", s.touch.virtual_mouse_sensitivity * 100.0))
             }
+            Opt::TouchPointerScale => Some(format!("{:.0}%", s.touch.pointer_scale * 100.0)),
+            Opt::TouchPointerOpacity => Some(format!("{:.0}%", s.touch.pointer_opacity * 100.0)),
+            Opt::TouchPointerAccuracy => {
+                Some(format!("{:.0}%", s.touch.pointer_accuracy * 100.0))
+            }
+            Opt::TouchPointerStyle => Some(
+                match s.touch.pointer_style {
+                    0 => "Ring",
+                    1 => "Dot",
+                    2 => "Cross",
+                    _ => "None",
+                }
+                .to_owned(),
+            ),
             Opt::TouchCrosshairGestures => Some(
                 if s.touch.crosshair_gestures {
                     "ON"
@@ -1039,6 +1082,10 @@ impl Opt {
             Opt::TouchSensitivityHorizontal => s.touch.sensitivity_horizontal = 0.1 + v * 2.9,
             Opt::TouchSensitivityVertical => s.touch.sensitivity_vertical = 0.1 + v * 2.9,
             Opt::TouchMouseSensitivity => s.touch.virtual_mouse_sensitivity = 0.25 + v * 2.75,
+            Opt::TouchPointerScale => s.touch.pointer_scale = 0.5 + v * 2.0,
+            Opt::TouchPointerOpacity => s.touch.pointer_opacity = 0.15 + v * 0.85,
+            Opt::TouchPointerAccuracy => s.touch.pointer_accuracy = 0.2 + v * 0.8,
+            Opt::TouchPointerStyle => s.touch.pointer_style = (v * 3.0).round() as u8,
             Opt::TouchButtonScale => s.touch.button_scale = 0.5 + v * 1.5,
             Opt::FovEffects | Opt::DarknessPulsing => s.file.set(
                 self.file_key().unwrap(),
@@ -1553,6 +1600,8 @@ pub enum Page {
     Controls,
     KeyBinds,
     Mouse,
+    /// Everything about the on-screen mouse: speed, cursor size and opacity.
+    MouseSettings,
     Chat,
     Accessibility,
     Language,
@@ -1772,6 +1821,16 @@ fn slider_unsnapped(opt: Opt, held: bool, moved: Instant) -> bool {
         held
     }
 }
+/// The on-screen key list a touch tap opens on Key Binds. Rows are drawn from
+/// `available_keys()`, so every bindable key can be reached without a
+/// physical keyboard; `page` moves a screenful at a time.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct KeyPicker {
+    pub page: usize,
+}
+/// Keys shown per page of the picker: four columns of eight.
+pub const KEY_PICKER_PAGE: usize = 32;
+
 pub struct OptionsUi {
     pub stack: Vec<Page>,
     scroll: f32,
@@ -1789,6 +1848,10 @@ pub struct OptionsUi {
     pub selected_key: Option<&'static str>,
     /// The native mod's key waiting: (mod, key) in `mods.installed`.
     selected_native_key: Option<(usize, usize)>,
+    /// Key Binds on a touch screen: the on-screen key list's page, and the
+    /// key it is scrolled to. A phone's IME types text, never a keycode, so
+    /// without this a tap on a binding could never store anything.
+    pub key_picker: Option<KeyPicker>,
     /// Controller Binds: the action waiting for a pad button.
     pub selected_pad_action: Option<&'static str>,
     /// The glyphs the binds list shows (the setting, else the pad's family).
@@ -1877,6 +1940,7 @@ impl Default for OptionsUi {
             volt_glass: Default::default(),
             mod_menu: Default::default(),
             keybind_filter: 0,
+            key_picker: None,
             agent_status: Vec::new(),
             world_atlas: Default::default(),
             skin_slim: false,
@@ -2419,6 +2483,7 @@ impl OptionsUi {
             Page::Controls => "controls.title",
             Page::KeyBinds => "controls.keybinds.title",
             Page::Mouse => "options.mouse_settings.title",
+            Page::MouseSettings => "volt.pages.mouse",
             Page::Chat => "options.chat.title",
             Page::Accessibility => "options.accessibility.title",
             Page::Language => "options.language.title",
@@ -2969,6 +3034,26 @@ impl OptionsUi {
                         Act::Push(Page::KeyBinds),
                     )),
                 )];
+                // The touch mouse deserves a tab of its own, not a row buried
+                // under Controls: size, opacity and speed are things players
+                // change while playing, so they must be one tap from here.
+                #[cfg(target_os = "android")]
+                rows.push(Row::Buttons(
+                    button(
+                        0.0,
+                        0.0,
+                        150.0,
+                        tr("volt.pages.mouse"),
+                        Act::Push(Page::MouseSettings),
+                    ),
+                    Some(button(
+                        0.0,
+                        0.0,
+                        150.0,
+                        Text::literal("Customize layout..."),
+                        Act::TouchControls,
+                    )),
+                ));
                 #[cfg(target_os = "android")]
                 rows.insert(0, Row::Big(Opt::AndroidInputMode));
                 let controls = vanilla_control_options();
@@ -3048,6 +3133,7 @@ impl OptionsUi {
                 rows
             }
             Page::Mouse => pairs(MOUSE_OPTIONS),
+            Page::MouseSettings => pairs(MOUSE_SETTINGS_OPTIONS),
             Page::Chat => pairs(&[
                 Opt::ChatVisibility,
                 Opt::ChatColors,
@@ -3484,17 +3570,16 @@ impl OptionsUi {
                     list: false,
                 });
                 let keypad = s.keypad.enabled;
-                if cfg!(target_os = "android") || keypad {
+                if keypad {
+                    // Only while the on-screen keypad is the active profile:
+                    // the bar sat on top of the binding list otherwise, and
+                    // the keypad is switched on from Controls, not from here.
                     top = 64.0;
                     out.push(button(
                         cx - 150.0,
                         39.0,
                         300.0,
-                        Text::literal(if keypad {
-                            "Input profile: D-pad / keypad"
-                        } else {
-                            "Input profile: Keyboard"
-                        }),
+                        Text::literal("Input profile: D-pad / keypad"),
                         Act::KeyboardProfile,
                     ));
                 }
@@ -4468,6 +4553,11 @@ impl OptionsUi {
                 );
             }
         }
+        // The on-screen key list: a phone has no hardware key to press, so
+        // tapping a binding opens this instead of waiting for one.
+        if self.page() == Page::KeyBinds && self.key_picker.is_some() {
+            self.draw_key_picker(batch, atlas, (w, h), cursor);
+        }
         if self.page() == Page::Waypoints {
             let mut name_box = self.waypoint_name.clone();
             name_box.draw(batch, atlas, None);
@@ -4704,7 +4794,7 @@ impl OptionsUi {
                     Action::SliderDrag => events.push(Event::SliderDrag),
                     Action::OpenAdvanced => self.push(Page::GraphicsAdvanced),
                     Action::OpenHdr => self.push(Page::GraphicsHdr),
-                    Action::BindKey(name) => self.selected_key = Some(name),
+                    Action::BindKey(name) => self.arm_binding(name),
                     Action::OpenSimple => {
                         if self.stack.len() >= 2
                             && self.stack[self.stack.len() - 2] == Page::Graphics
@@ -4739,7 +4829,7 @@ impl OptionsUi {
                     VoltUiAction::ButtonClick => events.push(Event::ButtonClick),
                     VoltUiAction::Changed => events.push(Event::Changed),
                     VoltUiAction::SliderDrag => events.push(Event::SliderDrag),
-                    VoltUiAction::BindKey(name) => self.selected_key = Some(name),
+                    VoltUiAction::BindKey(name) => self.arm_binding(name),
                     VoltUiAction::OpenModMenu => {
                         self.push(Page::ModMenu);
                     }
@@ -4842,6 +4932,23 @@ impl OptionsUi {
                 crate::pack_screen::Action::None => {}
             }
             return events;
+        }
+        // The key list is modal: while it is open it takes every tap. A tap
+        // that misses the grid is swallowed rather than falling through to the
+        // binding list drawn underneath, which used to re-arm the row and make
+        // the next press bind it by accident.
+        if self.key_picker.is_some() {
+            if drag {
+                return Vec::new();
+            }
+            if let Some(events) = self.click_key_picker(s, x, y, size) {
+                return events;
+            }
+            // A tap beside the grid closes the list without binding. Phones
+            // have no Escape, so this is the only way back out.
+            self.key_picker = None;
+            self.selected_key = None;
+            return vec![Event::ButtonClick];
         }
         let (widgets, top, bottom, content) = self.layout(s, size.0, size.1);
         let mut events = Vec::new();
@@ -5005,7 +5112,7 @@ impl OptionsUi {
                         }
                         Act::Extra(item) => {
                             if let Some(name) = item.key_name() {
-                                self.selected_key = Some(name);
+                                self.arm_binding(name);
                             } else {
                                 item.cycle(&mut s.extras, right);
                                 if matches!(
@@ -5030,7 +5137,7 @@ impl OptionsUi {
                             vact.trigger(&mut s.extras, right);
                             events.push(Event::Changed);
                         }
-                        Act::Key(name) => self.selected_key = Some(name),
+                    Act::Key(name) => self.arm_binding(name),
                         Act::KeyboardProfile => {
                             s.keypad.enabled = !s.keypad.enabled;
                             self.scroll = 0.0;
@@ -5081,7 +5188,7 @@ impl OptionsUi {
                             events.push(Event::WatchReplay(i));
                         }
                         Act::NativeKey(i, k) => {
-                            self.selected_key = Some(NATIVE_KEY);
+                            self.arm_binding(NATIVE_KEY);
                             self.selected_native_key = Some((i, k));
                         }
                         Act::NativeButton(i, b) => events.push(Event::NativeButton(i, b)),
@@ -5561,6 +5668,109 @@ impl OptionsUi {
         }
         vec![Event::Changed]
     }
+    /// The on-screen key list's rectangles: `(key name, x, y, w, h)`, plus the
+    /// pager below the grid. Laid out over the middle of the screen so it is
+    /// reachable with one thumb.
+    fn key_picker_rects(&self, size: (f32, f32)) -> (Vec<(&'static str, f32, f32, f32, f32)>, [f32; 4], [f32; 4]) {
+        let all = keybinds::available_keys();
+        let page = self.key_picker.map_or(0, |p| p.page);
+        let start = (page * KEY_PICKER_PAGE).min(all.len().saturating_sub(1).max(0));
+        let (cols, rows) = (4usize, 8usize);
+        let (bw, bh, gap) = (86.0, 18.0, 2.0);
+        let grid_w = cols as f32 * bw + (cols as f32 - 1.0) * gap;
+        let grid_h = rows as f32 * bh + (rows as f32 - 1.0) * gap;
+        let x0 = (size.0 - grid_w) / 2.0;
+        let y0 = ((size.1 - grid_h) / 2.0).max(30.0);
+        let mut rects = Vec::new();
+        for (i, (name, _)) in all.iter().enumerate().skip(start).take(KEY_PICKER_PAGE) {
+            let slot = i - start;
+            let (cx, cy) = (slot % cols, slot / cols);
+            let x = x0 + cx as f32 * (bw + gap);
+            let y = y0 + cy as f32 * (bh + gap);
+            rects.push((*name, x, y, bw, bh));
+        }
+        let py = y0 + grid_h + 8.0;
+        let prev = [x0, py, 84.0, 18.0];
+        let next = [x0 + grid_w - 84.0, py, 84.0, 18.0];
+        (rects, prev, next)
+    }
+    fn draw_key_picker(
+        &self,
+        batch: &mut HudBatch,
+        atlas: &HudAtlas,
+        size: (f32, f32),
+        cursor: (f32, f32),
+    ) {
+        // A dark sheet under the grid so the world behind cannot be mistaken
+        // for a key.
+        let (rects, prev, next) = self.key_picker_rects(size);
+        batch.fill(atlas, 0.0, 0.0, size.0, size.1, rgba(0, 0, 0, 140));
+        for (name, x, y, w, h) in &rects {
+            let label = keybinds::display_name(name);
+            let hover = ui::hovered(cursor, *x, *y, *w, *h);
+            ui::button(batch, atlas, *x, *y, *w, *h, &label, true, hover);
+        }
+        for (rect, label) in [
+            (prev, if self.key_picker.map_or(0, |p| p.page) > 0 { "< Prev" } else { "" }),
+            (next, "Next >"),
+        ] {
+            if label.is_empty() {
+                continue;
+            }
+            let hover = ui::hovered(cursor, rect[0], rect[1], rect[2], rect[3]);
+            ui::button(batch, atlas, rect[0], rect[1], rect[2], rect[3],
+                &Text::literal(label), true, hover);
+        }
+        let hint = Text::literal("Tap a key to bind it").with_color(text::YELLOW);
+        let hint_w = atlas.font.width_text(&hint);
+        batch.text_styled(atlas, &hint, (size.0 - hint_w) / 2.0, 20.0, u32::MAX, true);
+    }
+    /// A tap on the key list: bind that key, page, or fall through.
+    /// Arms `name` for rebinding, opening the on-screen key list on Android.
+    ///
+    /// Every way of starting a bind funnels through here: a phone has no
+    /// keycodes to offer, so arming without the list left the row waiting for
+    /// a mouse button and bound whatever was pressed next. That is what turned
+    /// rows into Middle or random buttons.
+    fn arm_binding(&mut self, name: &'static str) {
+        self.selected_key = Some(name);
+        #[cfg(target_os = "android")]
+        {
+            self.key_picker = Some(KeyPicker::default());
+        }
+    }
+    /// Closes the key list and writes `name` to the binding being edited.
+    /// Taps and physical keys both come through here so they store the same
+    /// way; with no binding in flight the list just closes.
+    fn pick_key(&mut self, s: &mut Settings, name: &str) -> Vec<Event> {
+        self.key_picker = None;
+        // `bind_key` consumes `selected_key`; without it there is no mapping
+        // to write, so close rather than pretend it landed.
+        if self.selected_key.is_none() {
+            return vec![Event::ButtonClick];
+        }
+        self.bind_key(s, name.to_string())
+    }
+    fn click_key_picker(&mut self, s: &mut Settings, x: f32, y: f32, size: (f32, f32)) -> Option<Vec<Event>> {
+        self.key_picker?;
+        let (rects, prev, next) = self.key_picker_rects(size);
+        for &(name, rx, ry, rw, rh) in &rects {
+            if ui::hovered((x, y), rx, ry, rw, rh) {
+                return Some(self.pick_key(s, name));
+            }
+        }
+        let mut page = self.key_picker.map_or(0, |p| p.page);
+        let pages = keybinds::available_keys().len().div_ceil(KEY_PICKER_PAGE).max(1);
+        if ui::hovered((x, y), prev[0], prev[1], prev[2], prev[3]) && page > 0 {
+            page -= 1;
+        } else if ui::hovered((x, y), next[0], next[1], next[2], next[3]) && page + 1 < pages {
+            page += 1;
+        } else {
+            return None;
+        }
+        self.key_picker = Some(KeyPicker { page });
+        Some(vec![Event::ButtonClick])
+    }
     /// Mouse bindings use the same settings and persistence as keyboard bindings.
     pub fn bind_mouse(
         &mut self,
@@ -5584,6 +5794,20 @@ impl OptionsUi {
                 self.resource_error = None;
             }
             return Vec::new();
+        }
+        // The on-screen key list is modal: Escape closes it and leaves the
+        // binding as it was, rather than backing out of the page. Any other
+        // physical key picks its equivalent entry, so a keyboard still binds.
+        if self.key_picker.is_some() {
+            if key == K::Escape {
+                self.key_picker = None;
+                self.selected_key = None;
+                return Vec::new();
+            }
+            return match keybinds::key_name(key) {
+                Some(name) => self.pick_key(s, name),
+                None => Vec::new(),
+            };
         }
         if self.page() == Page::Packs
             && let Some(p) = &mut self.pack_screen
@@ -5631,7 +5855,7 @@ impl OptionsUi {
                     Action::SliderDrag => events.push(Event::SliderDrag),
                     Action::OpenAdvanced => self.push(Page::GraphicsAdvanced),
                     Action::OpenHdr => self.push(Page::GraphicsHdr),
-                    Action::BindKey(name) => self.selected_key = Some(name),
+                    Action::BindKey(name) => self.arm_binding(name),
                     Action::OpenSimple => {
                         self.stack.pop();
                         self.push(Page::Graphics);
@@ -5653,7 +5877,7 @@ impl OptionsUi {
                     VoltUiAction::ButtonClick => events.push(Event::ButtonClick),
                     VoltUiAction::Changed => events.push(Event::Changed),
                     VoltUiAction::SliderDrag => events.push(Event::SliderDrag),
-                    VoltUiAction::BindKey(name) => self.selected_key = Some(name),
+                    VoltUiAction::BindKey(name) => self.arm_binding(name),
                     VoltUiAction::OpenModMenu => self.push(Page::ModMenu),
                     VoltUiAction::OpenVideoSettings => self.push(Page::Graphics),
                     VoltUiAction::OpenShaderPacks => {
@@ -7319,6 +7543,57 @@ mod tests {
         assert_eq!(s.keys.get("key.jump"), "key.mouse.left");
         assert_eq!(ui.scrollbar_drag_y, None);
         assert!(ui.release().is_empty());
+    }
+
+    /// The on-screen list owns the tap: it stores the key picked from the
+    /// grid and must not also take the tap itself as a mouse binding.
+    #[test]
+    fn picking_from_the_key_list_binds_that_key_and_stays_modal() {
+        let atlas = atlas();
+        let mut s = Settings::default();
+        let mut ui = OptionsUi::default();
+        ui.show(Page::KeyBinds);
+        ui.selected_key = Some("key.jump");
+        ui.key_picker = Some(KeyPicker::default());
+        let size = (480.0, 240.0);
+        let (rects, _, _) = ui.key_picker_rects(size);
+        let (name, x, y, w, h) = rects[0];
+        assert_eq!(
+            ui.click(&mut s, &atlas, x + w / 2.0, y + h / 2.0, size, [960, 480], false, false),
+            vec![Event::Changed]
+        );
+        assert_eq!(s.keys.get("key.jump"), name);
+        assert_ne!(s.keys.get("key.jump"), KeyBinds::default_of("key.jump"));
+        assert_eq!(ui.key_picker, None);
+        assert_eq!(ui.selected_key, None);
+
+        // A tap beside the grid closes the list instead of reaching the
+        // binding rows drawn underneath it.
+        let untouched = s.keys.get("key.forward").to_owned();
+        ui.selected_key = Some("key.forward");
+        ui.key_picker = Some(KeyPicker::default());
+        ui.click(&mut s, &atlas, 2.0, 2.0, size, [960, 480], false, false);
+        assert_eq!(ui.key_picker, None);
+        assert_eq!(ui.selected_key, None);
+        assert_eq!(s.keys.get("key.forward"), untouched);
+    }
+
+    /// Every key is reachable: the last page holds the final entry and the
+    /// pager stops there.
+    #[test]
+    fn key_list_pages_through_every_available_key() {
+        let all = keybinds::available_keys();
+        let pages = all.len().div_ceil(KEY_PICKER_PAGE);
+        let mut seen: Vec<&str> = Vec::new();
+        let mut ui = OptionsUi::default();
+        for page in 0..pages {
+            ui.key_picker = Some(KeyPicker { page });
+            let (rects, _, _) = ui.key_picker_rects((480.0, 720.0));
+            seen.extend(rects.iter().map(|(name, ..)| *name));
+        }
+        assert_eq!(seen.len(), all.len());
+        assert!(seen.iter().all(|n| all.iter().any(|(k, _)| k == n)));
+        assert!(pages >= 6, "194 keys take {pages} pages");
     }
 
     #[test]

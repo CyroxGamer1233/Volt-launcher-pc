@@ -162,6 +162,18 @@ impl Placement {
         }
     }
 }
+fn default_pointer_scale() -> f32 {
+    1.0
+}
+
+fn default_pointer_opacity() -> f32 {
+    1.0
+}
+
+fn default_pointer_accuracy() -> f32 {
+    1.0
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
@@ -184,6 +196,19 @@ pub struct Settings {
     pub sprint_toggle: bool,
     pub inventory_controls: bool,
     pub virtual_mouse_sensitivity: f32,
+    /// Scale of the virtual-mouse ring drawn under the pointer, 0.5..=2.5.
+    #[serde(default = "default_pointer_scale")]
+    pub pointer_scale: f32,
+    /// Opacity of that ring, 0.15..=1.0.
+    #[serde(default = "default_pointer_opacity")]
+    pub pointer_opacity: f32,
+    /// How precisely the virtual mouse tracks the thumb: 1.0 is linear,
+    /// below it moves slowly at first for fine aiming. 0.2..=1.0.
+    #[serde(default = "default_pointer_accuracy")]
+    pub pointer_accuracy: f32,
+    /// Crosshair style drawn under the pointer, 0..=3: ring, dot, cross, none.
+    #[serde(default)]
+    pub pointer_style: u8,
     pub crosshair_gestures: bool,
     pub gyroscope: bool,
     pub gyro_sensitivity: f32,
@@ -267,6 +292,10 @@ impl Default for Settings {
             sprint_toggle: false,
             inventory_controls: false,
             virtual_mouse_sensitivity: 1.0,
+            pointer_scale: 1.0,
+            pointer_opacity: 1.0,
+            pointer_accuracy: 1.0,
+            pointer_style: 0,
             crosshair_gestures: false,
             gyroscope: false,
             gyro_sensitivity: 1.0,
@@ -330,6 +359,22 @@ impl Settings {
         } else {
             1.0
         };
+        self.pointer_scale = if self.pointer_scale.is_finite() {
+            self.pointer_scale.clamp(0.5, 2.5)
+        } else {
+            1.0
+        };
+        self.pointer_opacity = if self.pointer_opacity.is_finite() {
+            self.pointer_opacity.clamp(0.15, 1.0)
+        } else {
+            1.0
+        };
+        self.pointer_accuracy = if self.pointer_accuracy.is_finite() {
+            self.pointer_accuracy.clamp(0.2, 1.0)
+        } else {
+            1.0
+        };
+        self.pointer_style = self.pointer_style.min(3);
         self.gyro_sensitivity = if self.gyro_sensitivity.is_finite() {
             self.gyro_sensitivity.clamp(0.1, 3.0)
         } else {

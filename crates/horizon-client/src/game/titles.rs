@@ -12,15 +12,16 @@ use horizon_client::{
 
 impl Game<'_> {
     /// `Hud.extractOverlayMessage` and `extractTitle`.
-    pub(super) fn draw_titles(&self, batch: &mut HudBatch, bar_height: i32) {
+    pub(super) fn draw_titles(&self, batch: &mut HudBatch, _bar_height: i32) {
         let (w, h) = (batch.width as i32, batch.height as i32);
         let partial = self.clock.fraction() as f32;
         let background = self.settings.text_background(0.0);
         let font = &self.gui.atlas.font;
-        let mut draws = self
-            .titles
-            .overlay_message(w, h, bar_height, partial, font, background);
-        draws.extend(self.titles.title(w, h, partial, font, background));
+        // The action bar (the line `Hud.extractOverlayMessage` draws above the
+        // hotbar) is not shown: on a phone it lands straight on top of the
+        // subtitles and the touch controls. Titles still draw, so a big
+        // "You died!" style banner is unaffected.
+        let draws = self.titles.title(w, h, partial, font, background);
         hud_layout::paint(batch, &self.gui.atlas, &draws);
     }
     /// `Hud.extractSavingIndicator`, under the screens: the option, then the

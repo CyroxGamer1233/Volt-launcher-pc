@@ -207,6 +207,78 @@ impl Game<'_> {
     /// `Hud.extractCameraOverlays`: the spyglass scope, its size easing
     /// towards 1.125 by half the frame's game ticks and reset to 0.5 while
     /// not scoping in first person.
+    /// HitReg: a crosshair hit-marker plus the click-to-confirm time.
+    ///
+    /// The marker is four strokes around the crosshair that fade out; the
+    /// readout shows the measured latency and colours itself once the hit
+    /// took long enough to matter.
+    pub(super) fn draw_hitreg(&mut self, batch: &mut HudBatch, w: i32, h: i32) {
+        if !self.hitreg_on() {
+            return;
+        }
+        // ABGR: opaque green, amber and coral.
+        const GREEN: u32 = 0xFF55_FF55;
+        const AMBER: u32 = 0xFF40_BFFF;
+        const CORAL: u32 = 0xFF5A_6BFF;
+        let now = std::time::Instant::now();
+        self.hitreg.expire(now);
+        let Some(marker) = self.hitreg.marker() else {
+            return;
+        };
+        let alpha = marker.alpha(now);
+        if alpha <= 0.0 {
+            return;
+        }
+        let (cx, cy) = (w as f32 / 2.0, h as f32 / 2.0);
+        // Colours are ABGR (`hud::rgba`), so alpha is the top byte.
+        let colour = |base: u32| -> u32 {
+            let a = (((base >> 24) & 0xFF) as f32 * alpha).clamp(0.0, 255.0) as u32;
+            (base & 0x00FF_FFFF) | (a << 24)
+        };
+        let tint = if marker.is_late() {
+            CORAL
+        } else if marker.is_slow() {
+            AMBER
+        } else {
+            GREEN
+        };
+        // Four corner strokes: four pixels out, four long, clear of the
+        // crosshair itself so both stay readable.
+        let (inner, len, thick) = (5.0_f32, 4.0_f32, 1.0_f32);
+        for (dx, dy) in [(-1.0_f32, -1.0_f32), (1.0, -1.0), (-1.0, 1.0), (1.0, 1.0)] {
+            let x = cx + dx * inner;
+            let y = cy + dy * inner;
+            let sx = if dx > 0.0 { x } else { x - len };
+            let sy = if dy > 0.0 { y } else { y - len };
+            batch.fill(
+                &self.gui.atlas,
+                sx,
+                if dy > 0.0 { y - thick } else { y },
+                len,
+                thick,
+                colour(tint),
+            );
+            batch.fill(
+                &self.gui.atlas,
+                if dx > 0.0 { x - thick } else { x },
+                sy,
+                thick,
+                len,
+                colour(tint),
+            );
+        }
+        // The readout, centred just under the crosshair.
+        let label = format!("{:.0} ms", marker.millis());
+        let tw = self.gui.atlas.font.width(&label);
+        batch.text(
+            &self.gui.atlas,
+            &label,
+            cx - tw / 2.0,
+            cy + 14.0,
+            colour(tint),
+            true,
+        );
+    }
     pub(super) fn draw_spyglass(&mut self, batch: &mut HudBatch) {
         self.scope_scale += 0.5 * self.frame_ticks * (1.125 - self.scope_scale);
         if !self.camera_type.first_person() {
