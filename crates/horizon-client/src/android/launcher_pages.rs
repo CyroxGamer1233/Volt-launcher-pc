@@ -157,7 +157,6 @@ fn draw_photo_thumb(
     }
 }
 
-#[derive(Clone, Copy, PartialEq)]
 /// The Mouse page's editable values.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum MouseField {
@@ -168,6 +167,7 @@ pub enum MouseField {
     ButtonScale,
     Style,
 }
+#[derive(Clone, Copy, PartialEq)]
 pub(crate) enum Action {
     HomeTab(HomeTab),
     ToggleAppearance,
