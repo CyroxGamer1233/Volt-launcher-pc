@@ -251,18 +251,20 @@ pub enum Page {
     Packs,
     Shaders,
     Controls,
+    Mouse,
     Installed,
     VoltSettings,
     Settings,
 }
 impl Page {
-    pub const ALL: [Self; 9] = [
+    pub const ALL: [Self; 10] = [
         Self::Play,
         Self::Account,
         Self::Mods,
         Self::Packs,
         Self::Shaders,
         Self::Controls,
+        Self::Mouse,
         Self::Installed,
         Self::VoltSettings,
         Self::Settings,
@@ -275,6 +277,7 @@ impl Page {
             Self::Packs => "Packs",
             Self::Shaders => "Shaders",
             Self::Controls => "Controls",
+            Self::Mouse => "Mouse",
             Self::Installed => "Installed",
             Self::VoltSettings => "Volt Settings",
             Self::Settings => "Settings",
@@ -1232,6 +1235,7 @@ fn run_single_source_query(
     let kind = match page {
         Page::Mods => Kind::Mod,
         Page::Shaders => Kind::Shader,
+        Page::Mouse => Kind::Mod,
         _ => Kind::ResourcePack,
     };
     let mut query = Query::new(text, kind);
