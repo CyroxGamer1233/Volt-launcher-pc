@@ -3195,8 +3195,39 @@ impl OptionsUi {
                         Act::Push(Page::VoltReplay),
                     )),
                 );
+                // Every built-in Volt engine mod (the 51-mod catalog) is a
+                // row here too: they are compiled into this game, so the
+                // player switches them without installing anything. Ids the
+                // native or bundled lists already added are skipped, since
+                // those rows carry their own settings page.
+                let volt_rows: Vec<Row> = {
+                    let query = self.settings_search.value.trim().to_lowercase();
+                    let have: Vec<&str> =
+                        s.mods.installed.iter().map(|m| m.id.as_str()).collect();
+                    let mut rows = Vec::new();
+                    for id in crate::volt_mods::VoltModId::ALL {
+                        let meta = id.meta();
+                        if have.contains(&meta.slug) {
+                            continue;
+                        }
+                        if !query.is_empty()
+                            && !meta.title.to_lowercase().contains(&query)
+                            && !meta.summary.to_lowercase().contains(&query)
+                            && !meta.category.label().to_lowercase().contains(&query)
+                        {
+                            continue;
+                        }
+                        let label = Text::literal(format!("{} {}: ", meta.title, meta.version))
+                            .append(on_off(s.extras.mod_catalog.is_on(id)));
+                        rows.push(Row::Buttons(
+                            button(0.0, 0.0, 310.0, label, Act::ToggleVoltMod(id)),
+                            None,
+                        ));
+                    }
+                    rows
+                };
                 if s.mods.installed.is_empty() {
-                    return vec![replay, Row::Header("horizon.mods.empty")];
+                    return std::iter::once(replay).chain(volt_rows).collect();
                 }
                 std::iter::once(replay)
                     .chain(s.mods
@@ -4649,7 +4680,7 @@ impl OptionsUi {
                             s.extras.volt_qol.replay_buffer,
                         )),
                         Act::ToggleVoltMod(id) => {
-                            Some((id.meta().title.to_owned(), s.extras.mod_catalog.is_on(*id)))
+                            Some((id.meta().title.to_owned(), s.extras.mod_catalog.is_on(id)))
                         }
                         _ => None,
                     };
@@ -5185,7 +5216,7 @@ impl OptionsUi {
                             events.push(Event::Changed);
                         }
                         Act::ToggleVoltMod(id) => {
-                            s.extras.mod_catalog.toggle(*id);
+                            s.extras.mod_catalog.toggle(id);
                             events.push(Event::Changed);
                         }
                         Act::ModSettings(i) => {
