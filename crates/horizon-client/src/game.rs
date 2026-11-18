@@ -14718,7 +14718,21 @@ impl Game<'_> {
                     || self.dialog_open()
                     || (self.screen == Screen::Win && self.win_screen_pauses())));
         let radius = self.settings.menu_blur as f32;
-        (blurred && radius >= 1.0).then_some(radius)
+        if blurred && radius >= 1.0 {
+            return Some(radius);
+        }
+        // The Motion Blur mod: a small whole-frame smear while the camera is
+        // actually turning. Nothing is blurred standing still, and the menu
+        // blur above always wins when a screen is open.
+        if self.title.is_none() && self.screen == Screen::Playing && self.motion_blur_on() {
+            let strength = self.motion_blur_strength;
+            if strength > 0.02 {
+                // Under two pixels reads as noise, not motion; a hard whip
+                // tops out near six.
+                return Some(1.0 + strength * 5.0);
+            }
+        }
+        None
     }
     /// `LevelExtractor` / `LevelRenderer`: the world border wall this frame.
     fn border_draw(

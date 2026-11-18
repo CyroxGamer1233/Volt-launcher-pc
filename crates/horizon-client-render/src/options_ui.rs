@@ -1669,6 +1669,10 @@ enum Act {
     ResetPadKey(&'static str),
     ResetPadKeys,
     ToggleMod(usize),
+    /// Turn one of the built-in Volt engine mods on or off
+    /// (`settings.extras.mod_catalog`, the same state the in-game Mod Menu
+    /// and the launcher's Mods tab switch).
+    ToggleVoltMod(crate::volt_mods::VoltModId),
     /// Pick `s.shader_packs[i]`, or turn it off when it is the pick.
     PickShaderPack(usize),
     OpenShaderPackFolder,
@@ -2203,7 +2207,8 @@ impl OptionsUi {
             | Page::VoltQol
             | Page::VoltChat
             | Page::VoltVisuals
-            | Page::VoltMods => true,
+            | Page::VoltMods
+            | Page::Mods => true,
             Page::KeyBinds => s
                 .extras
                 .mod_catalog
@@ -2225,6 +2230,7 @@ impl OptionsUi {
                     | Page::VoltChat
                     | Page::VoltVisuals
                     | Page::VoltMods
+                    | Page::Mods
             )
     }
     fn waypoint_name_active(&self) -> bool {
@@ -3228,6 +3234,7 @@ impl OptionsUi {
                             Row::Buttons(if dead { inactive(widget) } else { widget }, None)
                         }
                     }))
+                    .chain(volt_rows)
                     .collect()
             }
             Page::NativeMod(i) => self.native_rows(s, i),
@@ -4641,6 +4648,9 @@ impl OptionsUi {
                             "Volt Replay 1.0.0".to_owned(),
                             s.extras.volt_qol.replay_buffer,
                         )),
+                        Act::ToggleVoltMod(id) => {
+                            Some((id.meta().title.to_owned(), s.extras.mod_catalog.is_on(*id)))
+                        }
                         _ => None,
                     };
                     if let Some((title, on)) = toggle {
@@ -5172,6 +5182,10 @@ impl OptionsUi {
                         }
                         Act::ToggleMod(i) => {
                             s.mods.toggle(i);
+                            events.push(Event::Changed);
+                        }
+                        Act::ToggleVoltMod(id) => {
+                            s.extras.mod_catalog.toggle(*id);
                             events.push(Event::Changed);
                         }
                         Act::ModSettings(i) => {

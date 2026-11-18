@@ -477,6 +477,9 @@ fn pojav_box(
     scaled_at: f32,
     seed: usize,
 ) -> (f32, f32, f32, f32) {
+    // `scaledAt` stays what Pojav documents it as — the scale expressions
+    // read through `${preferred_scale}` — rather than a size multiplier this
+    // code would be guessing at.
     let raw_w = json_f32(obj.get("width")).unwrap_or(50.0).max(8.0) * dp_px;
     let raw_h = json_f32(obj.get("height")).unwrap_or(50.0).max(8.0) * dp_px;
     let vars = ExprVars {
@@ -539,8 +542,26 @@ fn parse_pojav_button(
             tokens.push(mapped);
         }
     }
+    // A button whose key this game cannot name is still a button the player
+    // drew: dropping it silently made imported layouts look incomplete (and
+    // shifted every later button's position). Keep it on screen with a key it
+    // can never press, so the row, its size, its label and its position all
+    // survive the import and the player can rebind it in the editor.
     if tokens.is_empty() {
-        return None;
+        let named = obj
+            .get("name")
+            .and_then(Value::as_str)
+            .is_some_and(|n| !n.trim().is_empty());
+        let has_any_key = obj
+            .get("keycodes")
+            .and_then(Value::as_array)
+            .is_some_and(|a| !a.is_empty())
+            || obj.get("keycode").and_then(Value::as_i64).is_some();
+        // A button with nothing at all — no name, no key — is not a control.
+        if !named && !has_any_key {
+            return None;
+        }
+        tokens.push("key.keyboard.unknown".to_owned());
     }
 
     let (x, y, bw, bh) =
@@ -581,10 +602,15 @@ fn parse_pojav_button(
         .get("displayInGame")
         .and_then(Value::as_bool)
         .unwrap_or(true);
+    // A Pojav file that says nothing about menu visibility means "show it":
+    // the classic ControlLayout has no such field at all, and defaulting it
+    // to false hid every imported button on the inventory/container screens,
+    // so a layout that looked complete in game all but vanished in the
+    // editor. Only an explicit `displayInMenu: false` hides a button there.
     let in_menu = obj
         .get("displayInMenu")
         .and_then(Value::as_bool)
-        .unwrap_or(false);
+        .unwrap_or(true);
 
     let bg_color = parse_argb_color(obj.get("bgColor")).or(Some([0, 0, 0, 115]));
     let stroke_width_pct = json_f32(obj.get("strokeWidth")).unwrap_or(0.0);
@@ -840,7 +866,23 @@ fn parse_fcl_button(
         }
     }
     if tokens.is_empty() {
-        return None;
+        // Same rule as the Pojav path: a control FCL drew but this game has
+        // no key name for keeps its row, size, label and position so the
+        // layout still matches what the player authored. A button carrying
+        // nothing at all is not a control.
+        let named = btn
+            .get("text")
+            .and_then(Value::as_str)
+            .is_some_and(|t| !t.trim().is_empty());
+        let has_any_key = press
+            .get("keycodes")
+            .or_else(|| event.get("keycodes"))
+            .and_then(Value::as_array)
+            .is_some_and(|a| !a.is_empty());
+        if !named && !has_any_key {
+            return None;
+        }
+        tokens.push("key.keyboard.unknown".to_owned());
     }
 
     let toggle = press
@@ -1389,7 +1431,12 @@ pub fn map_java_keycode(code: i32, legacy_lwjgl2: bool) -> Option<String> {
     if legacy_lwjgl2 {
         return map_lwjgl2_keycode(code).map(str::to_owned);
     }
-    map_glfw_keycode(code).map(str::to_owned)
+    // An unmapped GLFW code (a media key, a layout-specific key this game has
+    // no name for) must not delete the button: fall back to a token that
+    // keeps the control and can be rebound later.
+    map_glfw_keycode(code)
+        .map(str::to_owned)
+        .or_else(|| Some("key.keyboard.unknown".to_owned()))
 }
 
 fn map_glfw_keycode(code: i32) -> Option<&'static str> {
@@ -2390,6 +2437,42 @@ mod tests {
             assert!((0.0..=1.0).contains(&c[0]), "off screen x: {c:?}");
             assert!((0.0..=1.0).contains(&c[1]), "off screen y: {c:?}");
         }
+    }
+
+    /// A Pojav file with no `displayInMenu` field means "show on menu
+    /// screens": defaulting it to false hid every imported button in the
+    /// inventory editor, so a complete layout looked nearly empty.
+    #[test]
+    fn imported_pojav_buttons_stay_visible_on_menu_screens() {
+        let pojav = serde_json::json!({
+            "version": 5,
+            "scaledAt": 100.0,
+            "mControlDataList": [
+                { "name": "W", "width": 50.0, "height": 50.0, "keycodes": [87],
+                  "dynamicX": "10.0", "dynamicY": "10.0" },
+                { "name": "SPACE", "width": 80.0, "height": 40.0, "keycodes": [32],
+                  "dynamicX": "10.0", "dynamicY": "70.0" },
+            ],
+        });
+        let imported =
+            import_bytes(&serde_json::to_vec(&pojav).unwrap(), "menu-vis.json").unwrap();
+        assert_eq!(imported.settings.custom_buttons.len(), 2);
+        for b in &imported.settings.custom_buttons {
+            assert!(b.in_menu, "{} was hidden on menu screens", b.key);
+            assert!(b.in_game, "{} was hidden in game", b.key);
+        }
+        // An explicit false is still honoured.
+        let explicit = serde_json::json!({
+            "version": 5,
+            "scaledAt": 100.0,
+            "mControlDataList": [
+                { "name": "Quiet", "width": 50.0, "height": 50.0, "keycodes": [81],
+                  "displayInMenu": false, "dynamicX": "10.0", "dynamicY": "10.0" },
+            ],
+        });
+        let imported =
+            import_bytes(&serde_json::to_vec(&explicit).unwrap(), "explicit.json").unwrap();
+        assert!(!imported.settings.custom_buttons[0].in_menu);
     }
 
     #[test]
