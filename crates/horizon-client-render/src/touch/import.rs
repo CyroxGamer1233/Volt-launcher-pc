@@ -1145,12 +1145,24 @@ fn parse_zalith_rect(obj: &Value, fallback_h: f32, seed: usize) -> (f32, f32, f3
     let tx = dynamic("dynamicX", REF_WIDTH_DP)
         .map(|px| (px / REF_WIDTH_DP).clamp(0.0, 1.0))
         .or_else(|| zl2_free("x"))
-        .or_else(|| find_coord(obj, X_KEYS, 0).map(position_to_fraction))
+        .or_else(|| {
+            find_coord(obj, X_KEYS, 0).map(|raw| {
+                // Axis-aware, like the Pojav path: a value that fits the
+                // reference width is dp, not a 0..=1000 fraction. Dividing
+                // everything by magnitude squeezed whole layouts into the
+                // left ~87% of the screen and left the right edge empty.
+                (resolve_axis_px(raw, REF_WIDTH_DP) / REF_WIDTH_DP).clamp(0.0, 1.0)
+            })
+        })
         .unwrap_or_else(|| if seed % 2 == 0 { 0.28 } else { 0.72 });
     let ty = dynamic("dynamicY", REF_HEIGHT_DP)
         .map(|px| (px / REF_HEIGHT_DP).clamp(0.0, 1.0))
         .or_else(|| zl2_free("y"))
-        .or_else(|| find_coord(obj, Y_KEYS, 1).map(position_to_fraction))
+        .or_else(|| {
+            find_coord(obj, Y_KEYS, 1).map(|raw| {
+                (resolve_axis_px(raw, REF_HEIGHT_DP) / REF_HEIGHT_DP).clamp(0.0, 1.0)
+            })
+        })
         .unwrap_or_else(|| 0.14 + (seed % 8) as f32 * 0.09);
 
     let left = (1.0 - norm_w) * tx;
@@ -1249,6 +1261,103 @@ fn parse_zalith_button(btn: &Value, seed: usize) -> Option<CustomButton> {
 // Shared Settings Assembler & Keycode / Expression Utilities
 // ---------------------------------------------------------------------------
 
+/// Nudge apart buttons that landed on top of each other.
+///
+/// Several launchers (and Zalith 2 layers in particular) let two controls sit
+/// at the same spot, and some exports repeat a position when a control was
+/// duplicated. Drawn as-is, each pair stacks and their captions print over one
+/// another into unreadable mush ("toglean", "Water" over "ender"), which is
+/// what "the controls are cramped and overlap" looks like.
+///
+/// Buttons are only moved when their centres are almost coincident, and only
+/// far enough to separate them, so a layout that genuinely uses overlapping
+/// rows is left alone.
+fn separate_stacked_buttons(buttons: &mut [CustomButton]) {
+    // Two centres closer than this (in both axes) are indistinguishable.
+    const MIN_GAP: f32 = 0.045;
+    const STEP: f32 = 0.035;
+    const EDGE: f32 = 0.02;
+    for _ in 0..16 {
+        let mut moved = false;
+        for i in 0..buttons.len() {
+            for j in (i + 1)..buttons.len() {
+                let a = buttons[i].layouts[0].center;
+                let b = buttons[j].layouts[0].center;
+                let (dx, dy) = (b[0] - a[0], b[1] - a[1]);
+                if dx.abs() >= MIN_GAP || dy.abs() >= MIN_GAP {
+                    continue;
+                }
+                // Push along whichever axis has room, preferring the one that
+                // is already separating them so the layout keeps its shape.
+                let (sx, sy) = if dx.abs() >= dy.abs() {
+                    (if dx >= 0.0 { 1.0 } else { -1.0 }, 0.0)
+                } else {
+                    (0.0, if dy >= 0.0 { 1.0 } else { -1.0 })
+                };
+                // Move every mode row by the same amount: a button sits in
+                // the same place whichever movement scheme is active, and
+                // separating only one row would leave the others stacked.
+                for (index, sign) in [(i, -1.0f32), (j, 1.0)] {
+                    for layout in buttons[index].layouts.iter_mut() {
+                        let c = &mut layout.center;
+                        c[0] = (c[0] + sign * sx * STEP).clamp(EDGE, 1.0 - EDGE);
+                        c[1] = (c[1] + sign * sy * STEP).clamp(EDGE, 1.0 - EDGE);
+                    }
+                }
+                moved = true;
+            }
+        }
+        if !moved {
+            break;
+        }
+    }
+}
+
+/// Stretch a freshly imported layout across the whole screen.
+///
+/// Launchers author layouts against whichever device the author owned. When
+/// that device was wider than the reference we normalise against, the whole
+/// set lands in a band with an empty strip down the right-hand side — and
+/// because everything is packed into less room than it needs, buttons collide
+/// with each other. Anchored percentage layouts are independent per axis, so
+/// scaling each axis on its own is the behaviour the launcher itself has.
+///
+/// Only layouts that clearly under-fill are touched: anything already using
+/// three quarters of an axis is left exactly as authored.
+fn stretch_to_screen(buttons: &mut [CustomButton]) {
+    if buttons.len() < 2 {
+        return;
+    }
+    const MIN_SPAN: f32 = 0.75;
+    const MARGIN: f32 = 0.02;
+    for axis in 0..2 {
+        let mut lo = f32::INFINITY;
+        let mut hi = f32::NEG_INFINITY;
+        for b in buttons.iter() {
+            let c = b.layouts[0].center[axis];
+            if c.is_finite() {
+                lo = lo.min(c);
+                hi = hi.max(c);
+            }
+        }
+        let span = hi - lo;
+        // A degenerate or already-wide layout would gain nothing and could
+        // distort deliberately tight control clusters.
+        if !span.is_finite() || span <= 0.0 || span >= MIN_SPAN {
+            continue;
+        }
+        let scale = (1.0 - MARGIN * 2.0) / span;
+        for b in buttons.iter_mut() {
+            for layout in b.layouts.iter_mut() {
+                let c = layout.center[axis];
+                layout.center[axis] = (MARGIN + (c - lo) * scale).clamp(0.0, 1.0);
+            }
+            // Keep the non-active rows consistent with row 0 the importer
+            // just produced; they are copies of the same placement anyway.
+        }
+    }
+}
+
 fn assemble_imported_settings(
     name: String,
     format: String,
@@ -1324,6 +1433,10 @@ fn assemble_imported_settings(
     settings.offhand_button = false;
     settings.shield_button = false;
 
+    let mut custom_buttons = custom_buttons;
+    separate_stacked_buttons(&mut custom_buttons);
+    stretch_to_screen(&mut custom_buttons);
+
     let distinct = {
         let mut seen: Vec<(i32, i32)> = Vec::with_capacity(custom_buttons.len());
         for b in &custom_buttons {
@@ -1379,32 +1492,6 @@ const Y_KEYS: &[&str] = &[
 const POSITION_CONTAINERS: &[&str] = &[
     "position", "pos", "layout", "rect", "bounds", "placement", "location", "transform",
 ];
-
-/// Interpret a raw position value of unknown units as a fraction of the free
-/// space (0..=1), which is what `CustomButton` stores.
-///
-/// Launchers disagree wildly: Pojav writes dp, Zalith 1 writes percent,
-/// Zalith 2 writes a 0..=10000 free-space fraction, FCL writes dp, and
-/// hand-edited files use 0..=1. Guessing a single scheme by key name is what
-/// left every imported button in the fallback grid, so scale on magnitude.
-fn position_to_fraction(raw: f32) -> f32 {
-    if !raw.is_finite() {
-        return 0.0;
-    }
-    let frac = if raw.abs() <= 1.0 {
-        raw
-    } else if raw.abs() <= 2.0 {
-        // 0..=1 with a stray "1.5" is far more likely a fraction than 1.5%.
-        raw / 2.0
-    } else if raw.abs() <= 100.0 {
-        raw / 100.0
-    } else if raw.abs() <= 1000.0 {
-        raw / 1000.0
-    } else {
-        raw / 10000.0
-    };
-    frac.clamp(0.0, 1.0)
-}
 
 /// Turn an unknown-unit coordinate into a pixel offset on one axis.
 ///
@@ -2791,6 +2878,69 @@ mod tests {
         // opposite sides, not nudged into the same half.
         assert!(centers[0][0] < 0.4, "Keyboard should be on the left: {:?}", centers[0]);
         assert!(centers[4][0] > 0.6, "Mouse should be on the right: {:?}", centers[4][0]);
+    }
+
+    /// Every button at the same spot is the extreme of "the controls are
+    /// cramped and overlap": they must come out separated, never stacked.
+    #[test]
+    fn identical_import_positions_are_separated() {
+        let stacked = serde_json::json!({
+            "version": 4,
+            "mControlDataList": [
+                { "name": "A", "width": 50, "height": 50, "keycodes": [87], "x": 400, "y": 200 },
+                { "name": "B", "width": 50, "height": 50, "keycodes": [83], "x": 400, "y": 200 },
+                { "name": "C", "width": 50, "height": 50, "keycodes": [65], "x": 400, "y": 200 },
+                { "name": "D", "width": 50, "height": 50, "keycodes": [68], "x": 400, "y": 200 },
+            ],
+        });
+        let imported = import_bytes(&serde_json::to_vec(&stacked).unwrap(), "stack.json").unwrap();
+        assert_eq!(imported.meta.buttons, 4);
+        assert_eq!(
+            imported.meta.distinct, 4,
+            "coincident controls must not share a slot: {:?}",
+            imported
+                .settings
+                .custom_buttons
+                .iter()
+                .map(|b| b.layouts[0].center)
+                .collect::<Vec<_>>()
+        );
+    }
+
+    /// A layout authored for a wider screen lands in a band on the left with
+    /// an empty strip down the right, which is what made every control feel
+    /// cramped. It is stretched onto the whole screen instead.
+    #[test]
+    fn underfilled_import_is_stretched_to_the_screen() {
+        let narrow = |name: &str, key: i32, x: f32| {
+            serde_json::json!({
+                "name": name, "width": 50.0, "height": 50.0, "keycodes": [key],
+                "x": x, "y": 0.15,
+            })
+        };
+        let file = serde_json::json!({
+            "version": 4,
+            "mControlDataList": [
+                narrow("A", 87, 0.10),
+                narrow("B", 83, 0.20),
+                narrow("C", 65, 0.30),
+                narrow("D", 68, 0.40),
+            ],
+        });
+        let imported = import_bytes(&serde_json::to_vec(&file).unwrap(), "narrow.json").unwrap();
+        let xs: Vec<f32> = imported
+            .settings
+            .custom_buttons
+            .iter()
+            .map(|b| b.layouts[0].center[0])
+            .collect();
+        let lo = xs.iter().copied().fold(f32::INFINITY, f32::min);
+        let hi = xs.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+        assert!(
+            hi - lo > 0.8,
+            "a squeezed layout must fill the screen width, got {xs:?}"
+        );
+        assert!(hi > 0.9, "the right-hand control must reach the right edge: {xs:?}");
     }
 
     /// Zalith Launcher 2 layout: `editorVersion` + `layers`, geometry nested

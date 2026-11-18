@@ -267,7 +267,11 @@ impl Game<'_> {
                 colour(tint),
             );
         }
-        // The readout, centred just under the crosshair.
+        // The readout, centred just under the crosshair (the mod's own
+        // switch turns just this line off, keeping the marker).
+        if !self.settings.extras.hitreg_readout {
+            return;
+        }
         let label = format!("{:.0} ms", marker.millis());
         let tw = self.gui.atlas.font.width(&label);
         batch.text(

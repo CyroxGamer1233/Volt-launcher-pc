@@ -71,6 +71,14 @@ enum Act {
     ResetControlLayout,
     /// Opens the embedded Controls Studio (the launcher's editor, 1:1).
     EditControls,
+    /// The badge long-press menu: bigger/smaller, clearer/fainter, off.
+    BadgeSize(bool),
+    BadgeOpacity(bool),
+    BadgeOff,
+    /// Keeps the badge menu alive when its body is tapped.
+    BadgePanel,
+    /// Dismisses the badge menu (a tap anywhere outside it).
+    BadgeClose,
 }
 
 /// A finger dragging the floating logo.
@@ -79,7 +87,12 @@ pub(super) struct LogoDrag {
     offset: [f32; 2],
     start: (f32, f32),
     moved: bool,
+    /// When the finger went down: a long hold opens the badge menu.
+    pressed_at: std::time::Instant,
 }
+
+/// How long the badge must be held, without dragging, to open its menu.
+const BADGE_LONG_PRESS: f32 = 0.45;
 
 /// The overlay's state on the `Game`.
 #[derive(Default)]
@@ -90,6 +103,9 @@ pub(super) struct Hub {
     pos: Option<[f32; 2]>,
     /// The touch currently dragging the logo.
     drag: Option<LogoDrag>,
+    /// Long-pressing the badge opens its own small settings window (size,
+    /// opacity, off) instead of the hub.
+    badge_menu: bool,
     tab: HubTab,
     /// Click targets rebuilt every drawn frame, in GUI coordinates.
     targets: Vec<([f32; 4], Act)>,
@@ -267,7 +283,9 @@ impl Game<'_> {
 
     /// The floating logo's rectangle in GUI coordinates, clamped on screen.
     pub(super) fn volt_hub_logo_rect(&self, w: f32, h: f32) -> [f32; 4] {
-        const S: f32 = 26.0;
+        // The side the user picked in the badge's long-press menu.
+        let s_cfg = f32::from(self.settings.extras.volt_badge_size);
+        let S: f32 = if s_cfg >= 16.0 { s_cfg } else { 26.0 };
         // Default spot: top middle (the owner's call); a drag moves it anywhere.
         let [x, y] = self.volt_hub.pos.unwrap_or([((w - S) / 2.0).floor(), 4.0]);
         [
@@ -290,6 +308,11 @@ impl Game<'_> {
         use winit::event::TouchPhase;
         // The logo is drawn inside the same safe-area inset as the hub.
         let p = self.volt_hub_inset_cursor(p);
+        // A badge the user turned off is not there: it takes no touches.
+        if self.settings.extras.volt_badge_hidden && !self.volt_hub.badge_menu {
+            self.volt_hub.drag = None;
+            return false;
+        }
         let owns = self.volt_hub.drag.as_ref().is_some_and(|d| d.id == id);
         // The logo rides over every in-game screen (pause, settings,
         // inventory, chat), so its gesture starts on any of them; only a
@@ -325,6 +348,14 @@ impl Game<'_> {
                 }
                 TouchPhase::Ended | TouchPhase::Cancelled => {
                     let d = self.volt_hub.drag.take().expect("owned drag");
+                    let held = d.pressed_at.elapsed().as_secs_f32();
+                    if phase == TouchPhase::Ended && !d.moved && held >= BADGE_LONG_PRESS {
+                        // Holding the badge opens its own window: size,
+                        // opacity and an off switch, without opening the hub.
+                        self.volt_hub.badge_menu = true;
+                        self.audio.play_button_click();
+                        return true;
+                    }
                     if phase == TouchPhase::Ended && !d.moved {
                         self.volt_hub.open = true;
                         self.volt_hub.presets =
@@ -344,6 +375,7 @@ impl Game<'_> {
                 offset: [p.0 - r[0], p.1 - r[1]],
                 start: p,
                 moved: false,
+                pressed_at: std::time::Instant::now(),
             });
             true
         }
@@ -408,13 +440,56 @@ impl Game<'_> {
         match act {
             Act::OpenHub => {
                 self.volt_hub.open = true;
+                self.volt_hub.badge_menu = false;
                 self.volt_hub.presets =
                     horizon_client::touch::import::list_presets(&volt_controls_root());
             }
             // The window body swallows its taps: only the X (or a tap on
             // the scrim outside the window, or F10) closes the hub.
             Act::Panel => {}
-            Act::Close => self.volt_hub.open = false,
+            Act::Close => {
+                self.volt_hub.open = false;
+                self.volt_hub.badge_menu = false;
+            }
+            // The badge's long-press menu.
+            Act::BadgeClose => self.volt_hub.badge_menu = false,
+            Act::BadgePanel => {}
+            Act::BadgeSize(up) => {
+                let sizes = crate::extras::VOLT_BADGE_SIZES;
+                let cur = self.settings.extras.volt_badge_size;
+                let i = sizes.iter().position(|&v| v == cur).unwrap_or(1);
+                let next = if up {
+                    (i + 1).min(sizes.len() - 1)
+                } else {
+                    i.saturating_sub(1)
+                };
+                self.settings.extras.volt_badge_size = sizes[next];
+                // Keep the badge on screen after growing it.
+                let (w, h) = self.gui_size();
+                if let Some([x, y]) = self.volt_hub.pos {
+                    let s = f32::from(sizes[next]);
+                    self.volt_hub.pos =
+                        Some([x.min(w - s).max(0.0), y.min(h - s).max(0.0)]);
+                }
+                self.settings.save(&Self::options_path());
+            }
+            Act::BadgeOpacity(up) => {
+                let ops = crate::extras::VOLT_BADGE_OPACITIES;
+                let cur = self.settings.extras.volt_badge_opacity;
+                let i = ops.iter().position(|&v| v == cur).unwrap_or(ops.len() - 1);
+                let next = if up {
+                    (i + 1).min(ops.len() - 1)
+                } else {
+                    i.saturating_sub(1)
+                };
+                self.settings.extras.volt_badge_opacity = ops[next];
+                self.settings.save(&Self::options_path());
+            }
+            Act::BadgeOff => {
+                self.settings.extras.volt_badge_hidden = true;
+                self.volt_hub.badge_menu = false;
+                self.settings.save(&Self::options_path());
+            }
             Act::Tab(tab) => {
                 self.volt_hub.tab = tab;
                 if tab == HubTab::Controls {
@@ -754,15 +829,26 @@ impl Game<'_> {
         // GUI pixels -> dp, for rects kept in GUI coordinates (the logo).
         let kd = scale / ui.density;
 
-        if !open {
+        // The badge's own settings, from its long-press menu.
+        let badge_hidden = self.settings.extras.volt_badge_hidden;
+        let badge_alpha =
+            (f32::from(self.settings.extras.volt_badge_opacity) / 100.0).clamp(0.1, 1.0);
+        if !open && !badge_hidden {
             // The floating Volt logo on a soft dark chip; crimson while
             // recording. Its rect stays in GUI coordinates for the drag
             // gesture, so convert for drawing only.
             let [bx, by, bs, _] = logo_rect;
             let (x, y, s) = (bx * kd, by * kd, bs * kd);
             let chip = if recording { CRIMSON } else { 0xE618100E };
-            ui.rounded(x, y, s, s, s * 0.28, chip);
-            ui.border(x, y, s, s, s * 0.28, fade(CRIMSON, if recording { 0.0 } else { 0.9 }));
+            ui.rounded(x, y, s, s, s * 0.28, fade(chip, badge_alpha));
+            ui.border(
+                x,
+                y,
+                s,
+                s,
+                s * 0.28,
+                fade(CRIMSON, if recording { 0.0 } else { 0.9 * badge_alpha }),
+            );
             let pad = s * 0.12;
             ui.volt_logo(x + pad, y + pad, s - pad * 2.0, s - pad * 2.0);
             targets.push((logo_rect, Act::OpenHub));
@@ -779,6 +865,137 @@ impl Game<'_> {
                     line,
                 );
             }
+        }
+
+        // The badge's own window, opened by holding it down: size, opacity
+        // and an off switch, exactly where the user's finger already is.
+        if self.volt_hub.badge_menu && !open {
+            let [bx, by, bs, _] = logo_rect;
+            let (bx, by, bs) = (bx * kd, by * kd, bs * kd);
+            let w = 196.0;
+            let row = 26.0;
+            let head = 26.0;
+            let h = head + row * 4.0 + 8.0;
+            let x = bx.clamp(6.0, (ui.w - w - 6.0).max(6.0));
+            // Below the badge when it fits, above it otherwise.
+            let y = if by + bs + 8.0 + h <= ui.h - 6.0 {
+                by + bs + 8.0
+            } else {
+                (by - 8.0 - h).max(6.0)
+            };
+            ui.rounded(x, y, w, h, 12.0, PANEL);
+            ui.border(x, y, w, h, 12.0, 0x5A3C14DC);
+            ui.rounded(x, y, w, 3.0, 1.5, CRIMSON);
+            ui.text(Face::LauncherMedium, 11.5, x + 10.0, y + 7.0, DIM, "VOLT BADGE");
+
+            let sizes = crate::extras::VOLT_BADGE_SIZES;
+            let ops = crate::extras::VOLT_BADGE_OPACITIES;
+            let size = self.settings.extras.volt_badge_size;
+            let op = self.settings.extras.volt_badge_opacity;
+            let mut stepper = |ui: &mut Ui,
+                               targets: &mut Vec<([f32; 4], Act)>,
+                               ry: f32,
+                               label: &str,
+                               value: String,
+                               minus: Act,
+                               plus: Act,
+                               can_minus: bool,
+                               can_plus: bool| {
+                ui.text(
+                    Face::LauncherMedium,
+                    12.0,
+                    x + 10.0,
+                    ry + 6.0,
+                    TEXT,
+                    label,
+                );
+                let vw = ui.measure(Face::LauncherRegular, 11.5, &value);
+                ui.text(
+                    Face::LauncherRegular,
+                    11.5,
+                    x + w - 54.0 - vw,
+                    ry + 6.5,
+                    DIM,
+                    &value,
+                );
+                for (gx, glyph, act, on) in [
+                    (x + w - 48.0, "-", minus, can_minus),
+                    (x + w - 24.0, "+", plus, can_plus),
+                ] {
+                    ui.rounded(gx, ry + 2.0, 20.0, 20.0, 6.0, ROW);
+                    let gw = ui.measure(Face::LauncherMedium, 12.0, glyph);
+                    ui.text(
+                        Face::LauncherMedium,
+                        12.0,
+                        gx + (20.0 - gw) / 2.0,
+                        ry + 5.0,
+                        if on { TEXT } else { 0x55FFFFFF },
+                        glyph,
+                    );
+                    if on {
+                        targets.push(([gx * dk, (ry + 2.0) * dk, 20.0 * dk, 20.0 * dk], act));
+                    }
+                }
+            };
+            let i = sizes.iter().position(|&v| v == size);
+            stepper(
+                &mut ui,
+                &mut targets,
+                y + head,
+                "Size",
+                format!("{size} px"),
+                Act::BadgeSize(false),
+                Act::BadgeSize(true),
+                i.is_some_and(|i| i > 0),
+                i.is_none_or(|i| i + 1 < sizes.len()),
+            );
+            let j = ops.iter().position(|&v| v == op);
+            stepper(
+                &mut ui,
+                &mut targets,
+                y + head + row,
+                "Opacity",
+                format!("{op}%"),
+                Act::BadgeOpacity(false),
+                Act::BadgeOpacity(true),
+                j.is_some_and(|j| j > 0),
+                j.is_none_or(|j| j + 1 < ops.len()),
+            );
+            // Off, and done.
+            let off_y = y + head + row * 2.0;
+            ui.rounded(x + 8.0, off_y + 1.0, w - 16.0, 22.0, 7.0, ROW);
+            ui.text(
+                Face::LauncherMedium,
+                12.0,
+                x + 16.0,
+                off_y + 6.0,
+                CRIMSON,
+                "Turn off the V badge",
+            );
+            targets.push((
+                [(x + 8.0) * dk, (off_y + 1.0) * dk, (w - 16.0) * dk, 22.0 * dk],
+                Act::BadgeOff,
+            ));
+            let done_y = y + head + row * 3.0;
+            ui.rounded(x + 8.0, done_y + 1.0, w - 16.0, 22.0, 7.0, ROW);
+            let dw = ui.measure(Face::LauncherMedium, 12.0, "Done");
+            ui.text(
+                Face::LauncherMedium,
+                12.0,
+                x + (w - dw) / 2.0,
+                done_y + 6.0,
+                TEXT,
+                "Done",
+            );
+            targets.push((
+                [(x + 8.0) * dk, (done_y + 1.0) * dk, (w - 16.0) * dk, 22.0 * dk],
+                Act::Close,
+            ));
+            // The panel body itself swallows taps (pushed after the rows so
+            // the buttons keep priority), and anywhere else dismisses the
+            // menu without poking the world underneath.
+            targets.push(([x * dk, y * dk, w * dk, h * dk], Act::BadgePanel));
+            targets.push(([0.0, 0.0, ui.w * dk, ui.h * dk], Act::BadgeClose));
         }
 
         if t > 0.0 {

@@ -223,7 +223,24 @@ pub struct Extras {
     pub volt_mods: crate::volt_qol::VoltModsConfig,
     /// Built-in 50 pure-Rust native Volt 1.0.0 Mod Catalog state (synced between Launcher & Mod Menu).
     pub mod_catalog: crate::volt_mods::VoltModCatalogState,
+    // --- The floating in-game Volt (V) badge ---
+    /// Side of the badge in GUI pixels (long-press it to change).
+    pub volt_badge_size: u8,
+    /// Badge opacity as a percentage (long-press it to change).
+    pub volt_badge_opacity: u8,
+    /// Turned off from the badge's own long-press menu.
+    pub volt_badge_hidden: bool,
+    // --- Volt Feel mods: their own knobs ---
+    /// Motion Blur strength, 1..=5 (3 is the old fixed value).
+    pub motion_blur_strength: u8,
+    /// HitReg prints the measured milliseconds next to the marker.
+    pub hitreg_readout: bool,
 }
+
+/// The badge sizes the long-press menu steps through, in GUI pixels.
+pub const VOLT_BADGE_SIZES: [u8; 5] = [18, 26, 34, 42, 52];
+/// The badge opacities the long-press menu steps through, in percent.
+pub const VOLT_BADGE_OPACITIES: [u8; 5] = [30, 50, 70, 85, 100];
 
 impl Default for Extras {
     fn default() -> Self {
@@ -337,6 +354,11 @@ impl Default for Extras {
             volt_boost_plus: crate::volt_qol::VoltBoostPlusConfig::default(),
             volt_mods: crate::volt_qol::VoltModsConfig::default(),
             mod_catalog: crate::volt_mods::VoltModCatalogState::default(),
+            volt_badge_size: 26,
+            volt_badge_opacity: 100,
+            volt_badge_hidden: false,
+            motion_blur_strength: 3,
+            hitreg_readout: true,
         }
     }
 }
@@ -1023,10 +1045,37 @@ impl Extras {
                     }
                 }
                 "voltModOledAfk" => e.volt_mods.oled_afk_saver = flag(e.volt_mods.oled_afk_saver),
+                // The floating in-game V badge.
+                "voltBadgeSize" => {
+                    if let Ok(v) = value.parse::<u8>() {
+                        e.volt_badge_size = v.clamp(16, 64);
+                    }
+                }
+                "voltBadgeOpacity" => {
+                    if let Ok(v) = value.parse::<u8>() {
+                        e.volt_badge_opacity = v.clamp(10, 100);
+                    }
+                }
+                "voltBadgeHidden" => e.volt_badge_hidden = flag(e.volt_badge_hidden),
+                "motionBlurStrength" => {
+                    if let Ok(v) = value.parse::<u8>() {
+                        e.motion_blur_strength = v.clamp(1, 5);
+                    }
+                }
+                "hitregReadout" => e.hitreg_readout = flag(e.hitreg_readout),
                 _ => {
                     let _ = e.mod_catalog.parse_entry(key, value);
                 }
             }
+        }
+        // Snap a hand-edited size back onto a menu step so the badge stays
+        // visible and the long-press steps keep working from either end.
+        if !VOLT_BADGE_SIZES.contains(&e.volt_badge_size) {
+            e.volt_badge_size = VOLT_BADGE_SIZES
+                .iter()
+                .copied()
+                .min_by_key(|c| c.abs_diff(e.volt_badge_size))
+                .unwrap_or(26);
         }
         e
     }
@@ -1509,6 +1558,11 @@ impl Extras {
         );
         push("voltModTimeWeather", self.volt_mods.time_weather.as_str());
         push("voltModOledAfk", bool_text(self.volt_mods.oled_afk_saver));
+        push("voltBadgeSize", &self.volt_badge_size.to_string());
+        push("voltBadgeOpacity", &self.volt_badge_opacity.to_string());
+        push("voltBadgeHidden", bool_text(self.volt_badge_hidden));
+        push("motionBlurStrength", &self.motion_blur_strength.to_string());
+        push("hitregReadout", bool_text(self.hitreg_readout));
         self.mod_catalog.serialize_into(&mut push);
         s
     }
@@ -1994,6 +2048,12 @@ pub enum Item {
     MinimapBiome,
     MinimapTime,
     MinimapZoomKey,
+    /// Volt Feel mods and the in-game V badge:
+    MotionBlurStrength,
+    HitRegReadout,
+    VoltBadgeShow,
+    VoltBadgeSize,
+    VoltBadgeOpacity,
     /// Volt Boost page (Tiers 1, 2 & 3):
     VoltPreset,
     VoltAutoOptimize,
@@ -2227,6 +2287,11 @@ impl Item {
             Item::MouseTweaksWheel => "Scroll wheel moves items",
             Item::Sort => "Sort buttons",
             Item::SortKey => "Sort key",
+            Item::MotionBlurStrength => "Motion Blur strength",
+            Item::HitRegReadout => "HitReg shows the ms",
+            Item::VoltBadgeShow => "In-game V badge",
+            Item::VoltBadgeSize => "V badge size",
+            Item::VoltBadgeOpacity => "V badge opacity",
             Item::NoAi => "No AI",
             Item::AgentControl => "Agent Control",
             Item::DiscordPresence => "Discord Rich Presence",
@@ -2789,6 +2854,22 @@ impl Item {
             Item::VoltShaderVignette => {
                 "Applies a gentle cinematic edge darkening around the frame (OFF, Subtle or Strong)."
             }
+            Item::MotionBlurStrength => {
+                "How far the world smears while you turn. 1 is a whisper, 5 is a hard whip; nothing blurs while you stand still."
+            }
+            Item::HitRegReadout => {
+                "Prints how many milliseconds passed between your click and the hit landing, under the marker."
+            }
+            Item::VoltBadgeShow => {
+                "The floating Volt logo over the game. Hold it for its size, opacity and off switch."
+            }
+            Item::VoltBadgeSize => {
+                "Side of the floating V badge. Holding the badge changes the same value."
+            }
+            Item::VoltBadgeOpacity => {
+                "How solid the floating V badge looks. Holding the badge changes the same value."
+            }
+
         }
     }
     /// The frame-time cost the main switch of an extra shows.
@@ -2880,12 +2961,17 @@ impl Item {
             Item::VoltShaderCustomSky => e.volt_shaders.custom_sky,
             Item::VoltShaderSunHalo => e.volt_shaders.sun_halo,
             Item::VoltShaderSunRays => e.volt_shaders.sun_rays,
+            Item::HitRegReadout => e.hitreg_readout,
+            Item::VoltBadgeShow => !e.volt_badge_hidden,
             _ => return None,
         })
     }
     /// Formatted value shown on the option button.
     pub fn value(self, e: &Extras) -> String {
         match self {
+            Item::MotionBlurStrength => format!("{}/5", e.motion_blur_strength.clamp(1, 5)),
+            Item::VoltBadgeSize => format!("{} px", e.volt_badge_size),
+            Item::VoltBadgeOpacity => format!("{}%", e.volt_badge_opacity),
             Item::SortKey => crate::keybinds::display_name(&e.sort_key).plain(),
             Item::WaypointKey => crate::keybinds::display_name(&e.waypoint_key).plain(),
             Item::MinimapZoomKey => crate::keybinds::display_name(&e.minimap_zoom_key).plain(),
@@ -3001,6 +3087,42 @@ impl Item {
             Item::AutoReconnect => e.auto_reconnect = !e.auto_reconnect,
             Item::MouseTweaks => e.mouse_tweaks = !e.mouse_tweaks,
             Item::MouseTweaksWheel => e.mouse_tweaks_wheel = !e.mouse_tweaks_wheel,
+            Item::MotionBlurStrength => {
+                let i = e.motion_blur_strength.clamp(1, 5);
+                e.motion_blur_strength = if back {
+                    if i <= 1 { 5 } else { i - 1 }
+                } else {
+                    if i >= 5 { 1 } else { i + 1 }
+                };
+            }
+            Item::HitRegReadout => e.hitreg_readout = !e.hitreg_readout,
+            Item::VoltBadgeShow => e.volt_badge_hidden = !e.volt_badge_hidden,
+            Item::VoltBadgeSize => {
+                let list = VOLT_BADGE_SIZES;
+                let idx = list
+                    .iter()
+                    .position(|&v| v == e.volt_badge_size)
+                    .unwrap_or(1);
+                let next = if back {
+                    (idx + list.len() - 1) % list.len()
+                } else {
+                    (idx + 1) % list.len()
+                };
+                e.volt_badge_size = list[next];
+            }
+            Item::VoltBadgeOpacity => {
+                let list = VOLT_BADGE_OPACITIES;
+                let idx = list
+                    .iter()
+                    .position(|&v| v == e.volt_badge_opacity)
+                    .unwrap_or(list.len() - 1);
+                let next = if back {
+                    (idx + list.len() - 1) % list.len()
+                } else {
+                    (idx + 1) % list.len()
+                };
+                e.volt_badge_opacity = list[next];
+            }
             Item::Sort => e.sort = !e.sort,
             Item::NoAi => e.no_ai = !e.no_ai,
             Item::AgentControl => e.agent_control = !e.agent_control,

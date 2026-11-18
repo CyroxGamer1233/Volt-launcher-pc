@@ -2673,6 +2673,17 @@ impl OptionsUi {
                     self.extra_button(s, crate::extras::Item::Fullbright),
                     Some(self.extra_button(s, crate::extras::Item::DynamicLights)),
                 ));
+                // The floating V badge. It can be switched off from its own
+                // long-press menu, and this is where it comes back.
+                rows.push(Row::Header("In-game V badge"));
+                rows.push(Row::Buttons(
+                    self.extra_button(s, crate::extras::Item::VoltBadgeShow),
+                    Some(self.extra_button(s, crate::extras::Item::VoltBadgeSize)),
+                ));
+                rows.push(Row::Buttons(
+                    self.extra_button(s, crate::extras::Item::VoltBadgeOpacity),
+                    None,
+                ));
                 rows
             }
             Page::VoltQol => {
@@ -3223,6 +3234,29 @@ impl OptionsUi {
                             button(0.0, 0.0, 310.0, label, Act::ToggleVoltMod(id)),
                             None,
                         ));
+                        // The mods that own a knob show it right under their
+                        // switch, so "no configuration option" is answered
+                        // where the mod is turned on. Filtered out by the
+                        // caption when a search is running.
+                        let knobs: &[crate::extras::Item] = match id {
+                            crate::volt_mods::VoltModId::MotionBlur => {
+                                &[crate::extras::Item::MotionBlurStrength]
+                            }
+                            crate::volt_mods::VoltModId::HitReg => {
+                                &[crate::extras::Item::HitRegReadout]
+                            }
+                            _ => &[],
+                        };
+                        for knob in knobs {
+                            let caption = knob.caption().to_lowercase();
+                            if !query.is_empty()
+                                && !caption.contains(&query)
+                                && !meta.title.to_lowercase().contains(&query)
+                            {
+                                continue;
+                            }
+                            rows.push(Row::Buttons(self.extra_button(s, *knob), None));
+                        }
                     }
                     rows
                 };
@@ -4661,6 +4695,36 @@ impl OptionsUi {
         let counter = Text::literal(format!("{on_total}/{total} on"));
         let cw = atlas.font.width_text(&counter);
         batch.text_styled(atlas, &counter, w - cw - 10.0, 8.0, style::MUTED, true);
+        // The search field. The rows *were* filtered by it, but this page
+        // paints its own chrome and returned before the shared header drew
+        // the box — so the filter existed and the user never got a search box.
+        if self.has_settings_search(s) {
+            let mut search = self.settings_search.clone();
+            style::panel(
+                batch,
+                atlas,
+                [
+                    search.x - 4.0,
+                    search.y - 3.0,
+                    search.w + 8.0,
+                    search.h + 6.0,
+                ],
+            );
+            search.draw(batch, atlas, None);
+            if search.value.is_empty() && !search.focused {
+                batch.text_styled(
+                    atlas,
+                    &tr("horizon.options.search")
+                        .with_color(style::MUTED)
+                        .italic(),
+                    search.text_x(),
+                    search.text_y(),
+                    u32::MAX,
+                    true,
+                );
+            }
+            self.settings_search = search;
+        }
         let mut tooltip: Option<Vec<Text>> = None;
         for wd in &widgets {
             if wd.list && (wd.y + wd.h <= top || wd.y >= bottom) {

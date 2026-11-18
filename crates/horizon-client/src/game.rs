@@ -7631,10 +7631,11 @@ impl Game<'_> {
                 });
                 let draws = hud_layout::crosshair(wi, hi, attack, full);
                 hud_layout::paint(&mut batch, &self.gui.atlas, &draws);
-                // HitReg: the marker and timing readout sit around the
-                // crosshair, so they land in the same glance.
-                self.draw_hitreg(&mut batch, wi, hi);
             }
+            // HitReg draws whether or not a crosshair does: touch layouts hide
+            // the reticle, and the mod looked completely dead there because
+            // its whole readout lived inside the crosshair branch.
+            self.draw_hitreg(&mut batch, wi, hi);
             if spectator {
                 self.draw_spectator_hotbar(&mut batch);
             } else {
@@ -14304,7 +14305,10 @@ impl Game<'_> {
         if title || !self.motion_blur_on() {
             self.motion_blur.reset();
         } else {
-            self.motion_blur_strength = self.motion_blur.frame(yaw, pitch, 1.0);
+            // The strength knob (1..=5) scales the raw velocity response; 3
+            // is the value this mod shipped with.
+            let amount = f32::from(self.settings.extras.motion_blur_strength.clamp(1, 5)) / 3.0;
+            self.motion_blur_strength = self.motion_blur.frame(yaw, pitch, amount);
         }
         let fov_degrees = if title {
             85.0
@@ -14727,9 +14731,10 @@ impl Game<'_> {
         if self.title.is_none() && self.screen == Screen::Playing && self.motion_blur_on() {
             let strength = self.motion_blur_strength;
             if strength > 0.02 {
-                // Under two pixels reads as noise, not motion; a hard whip
-                // tops out near six.
-                return Some(1.0 + strength * 5.0);
+                // Under two pixels reads as noise, not motion. The radius
+                // climbs with the strength knob, so 5/5 is unmistakable.
+                let knob = f32::from(self.settings.extras.motion_blur_strength.clamp(1, 5));
+                return Some(1.0 + strength * (2.0 + knob * 1.4));
             }
         }
         None
