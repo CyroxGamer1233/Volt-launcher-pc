@@ -4680,7 +4680,7 @@ impl OptionsUi {
                             s.extras.volt_qol.replay_buffer,
                         )),
                         Act::ToggleVoltMod(id) => {
-                            Some((id.meta().title.to_owned(), s.extras.mod_catalog.is_on(id)))
+                            Some((id.meta().title.to_owned(), s.extras.mod_catalog.is_on(*id)))
                         }
                         _ => None,
                     };
