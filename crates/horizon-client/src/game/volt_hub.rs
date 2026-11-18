@@ -455,7 +455,7 @@ impl Game<'_> {
             Act::BadgeClose => self.volt_hub.badge_menu = false,
             Act::BadgePanel => {}
             Act::BadgeSize(up) => {
-                let sizes = crate::extras::VOLT_BADGE_SIZES;
+                let sizes = horizon_client::extras::VOLT_BADGE_SIZES;
                 let cur = self.settings.extras.volt_badge_size;
                 let i = sizes.iter().position(|&v| v == cur).unwrap_or(1);
                 let next = if up {
@@ -474,7 +474,7 @@ impl Game<'_> {
                 self.settings.save(&Self::options_path());
             }
             Act::BadgeOpacity(up) => {
-                let ops = crate::extras::VOLT_BADGE_OPACITIES;
+                let ops = horizon_client::extras::VOLT_BADGE_OPACITIES;
                 let cur = self.settings.extras.volt_badge_opacity;
                 let i = ops.iter().position(|&v| v == cur).unwrap_or(ops.len() - 1);
                 let next = if up {
@@ -888,8 +888,8 @@ impl Game<'_> {
             ui.rounded(x, y, w, 3.0, 1.5, CRIMSON);
             ui.text(Face::LauncherMedium, 11.5, x + 10.0, y + 7.0, DIM, "VOLT BADGE");
 
-            let sizes = crate::extras::VOLT_BADGE_SIZES;
-            let ops = crate::extras::VOLT_BADGE_OPACITIES;
+            let sizes = horizon_client::extras::VOLT_BADGE_SIZES;
+            let ops = horizon_client::extras::VOLT_BADGE_OPACITIES;
             let size = self.settings.extras.volt_badge_size;
             let op = self.settings.extras.volt_badge_opacity;
             let mut stepper = |ui: &mut Ui,
