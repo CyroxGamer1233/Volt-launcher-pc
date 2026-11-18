@@ -2475,6 +2475,40 @@ mod tests {
         assert!(!imported.settings.custom_buttons[0].in_menu);
     }
 
+    /// A launcher control this game has no key name for must still import:
+    /// dropping it silently made a full layout look sparse and shifted every
+    /// later button's slot.
+    #[test]
+    fn unmappable_buttons_are_kept_and_rebindable() {
+        let pojav = serde_json::json!({
+            "version": 5,
+            "scaledAt": 100.0,
+            "mControlDataList": [
+                // 0x1000 is not a GLFW key this game names.
+                { "name": "Media", "width": 50.0, "height": 50.0, "keycodes": [4096],
+                  "dynamicX": "10.0", "dynamicY": "10.0" },
+                // A name but no key at all.
+                { "name": "Sneak", "width": 50.0, "height": 50.0,
+                  "dynamicX": "10.0", "dynamicY": "70.0" },
+                // Nothing whatsoever: not a control.
+                { "width": 50.0, "height": 50.0,
+                  "dynamicX": "10.0", "dynamicY": "90.0" },
+            ],
+        });
+        let imported =
+            import_bytes(&serde_json::to_vec(&pojav).unwrap(), "unmapped.json").unwrap();
+        let kept = &imported.settings.custom_buttons;
+        assert_eq!(kept.len(), 2, "only the empty entry should be dropped");
+        assert!(kept.iter().all(|b| b.key == "key.keyboard.unknown"));
+        assert_eq!(kept[0].label.as_deref(), Some("Media"));
+        assert_eq!(kept[1].label.as_deref(), Some("Sneak"));
+        // The placeholder token survives sanitize, so the row is still there
+        // after the import is applied.
+        assert!(kept
+            .iter()
+            .all(|b| crate::touch::CustomButton::valid_token(&b.key)));
+    }
+
     #[test]
     fn pojav_stock_default_layout_imports_one_to_one() {
         let bytes = include_bytes!("fixtures/pojav-default.json");
