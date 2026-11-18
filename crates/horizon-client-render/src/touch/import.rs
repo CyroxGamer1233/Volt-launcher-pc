@@ -803,14 +803,32 @@ fn parse_fcl_base_info(
     // middle"). Spreading sends it to a free-ish slot instead.
     let rx = json_f32(base.get("xPosition").or_else(|| base.get("x")));
     let ry = json_f32(base.get("yPosition").or_else(|| base.get("y")));
+    // FCL writes positions as dp*10 (500 = 50dp), plain dp (50), a 0..1
+    // fraction, or a 0..100 percentage. Dividing everything by 1000 put
+    // every dp position in the left/top few percent of the screen, which
+    // read as a pile of controls in the corner. Convert by magnitude, then
+    // clamp into the axis.
+    let axis = |raw: f32, dp_axis: f32| -> f32 {
+        if raw > 1.0 {
+            let as_dp = raw / 10.0;
+            if as_dp <= dp_axis {
+                as_dp / dp_axis
+            } else if raw <= 100.0 {
+                raw / 100.0
+            } else {
+                raw / dp_axis
+            }
+        } else {
+            raw
+        }
+        .clamp(0.0, 1.0)
+    };
     let tx = rx
-        .map(|v| if v > 1.0 { v / 1000.0 } else { v })
-        .unwrap_or_else(|| if seed % 2 == 0 { 0.28 } else { 0.72 })
-        .clamp(0.0, 1.0);
+        .map(|v| axis(v, REF_WIDTH_DP))
+        .unwrap_or_else(|| if seed % 2 == 0 { 0.28 } else { 0.72 });
     let ty = ry
-        .map(|v| if v > 1.0 { v / 1000.0 } else { v })
-        .unwrap_or_else(|| 0.14 + (seed % 8) as f32 * 0.09)
-        .clamp(0.0, 1.0);
+        .map(|v| axis(v, REF_HEIGHT_DP))
+        .unwrap_or_else(|| 0.14 + (seed % 8) as f32 * 0.09);
     let left = (1.0 - norm_w) * tx;
     let top = (1.0 - norm_h) * ty;
     let cx = (left + norm_w * 0.5).clamp(0.01, 0.99);
@@ -1004,7 +1022,7 @@ fn parse_zalith_layer(
             if custom_buttons.len() >= MAX_CUSTOM_BUTTONS {
                 break;
             }
-            if let Some(mut parsed) = parse_zalith_button(btn) {
+            if let Some(mut parsed) = parse_zalith_button(btn, custom_buttons.len()) {
                 parsed.drawer_parent = drawer_parent;
                 custom_buttons.push(parsed);
             }
@@ -1017,7 +1035,7 @@ fn parse_zalith_layer(
             .and_then(Value::as_array)
         && let Some(stick) = sticks.first()
     {
-        let (cx, cy, _, norm_h) = parse_zalith_rect(stick, 0.28);
+        let (cx, cy, _, norm_h) = parse_zalith_rect(stick, 0.28, 0);
         let opacity = normalize_opacity(stick.get("alpha").or_else(|| stick.get("opacity")).and_then(Value::as_f64));
         *joystick = Some((
             Placement {
@@ -1031,7 +1049,7 @@ fn parse_zalith_layer(
     }
 }
 
-fn parse_zalith_rect(obj: &Value, fallback_h: f32) -> (f32, f32, f32, f32) {
+fn parse_zalith_rect(obj: &Value, fallback_h: f32, seed: usize) -> (f32, f32, f32, f32) {
     let normalize_coord = |raw: f32, dp_axis: f32| -> f32 {
         if raw > 1000.0 {
             raw / 10000.0
@@ -1061,24 +1079,42 @@ fn parse_zalith_rect(obj: &Value, fallback_h: f32) -> (f32, f32, f32, f32) {
         normalize_coord(rh, REF_HEIGHT_DP).clamp(0.025, 0.55)
     };
     let norm_h = if norm_h.is_finite() { norm_h } else { fallback_h };
-    let rx = json_f32(obj.get("x")).unwrap_or(0.5);
-    let ry = json_f32(obj.get("y")).unwrap_or(0.5);
-    let tx = (if rx > 1000.0 {
-        rx / 10000.0
-    } else if rx > 1.0 {
-        rx / 100.0
-    } else {
-        rx
-    })
-    .clamp(0.0, 1.0);
-    let ty = (if ry > 1000.0 {
-        ry / 10000.0
-    } else if ry > 1.0 {
-        ry / 100.0
-    } else {
-        ry
-    })
-    .clamp(0.0, 1.0);
+    // Zalith 2 shares Pojav's dynamic expressions, and many layouts carry
+    // `dynamicX`/`dynamicY` INSTEAD of x/y. Reading only x/y meant a missing
+    // position defaulted to 0.5 — dead centre — so every such button stacked
+    // on one spot.
+    let vars = ExprVars {
+        screen_w: REF_WIDTH_DP,
+        screen_h: REF_HEIGHT_DP,
+        btn_w: norm_w * REF_WIDTH_DP,
+        btn_h: norm_h * REF_HEIGHT_DP,
+        dp_px: 1.0,
+        px_scale: 1.0 / 2.75,
+        preferred_scale: 100.0,
+    };
+    let dynamic = |key: &str, axis: f32| -> Option<f32> {
+        obj.get(key)
+            .and_then(Value::as_str)
+            .and_then(|s| eval_dynamic_expr(s, &vars, axis))
+    };
+    let norm = |raw: f32| -> f32 {
+        (if raw > 1000.0 {
+            raw / 10000.0
+        } else if raw > 1.0 {
+            raw / 100.0
+        } else {
+            raw
+        })
+        .clamp(0.0, 1.0)
+    };
+    let tx = dynamic("dynamicX", REF_WIDTH_DP)
+        .map(|px| (px / REF_WIDTH_DP).clamp(0.0, 1.0))
+        .or_else(|| json_f32(obj.get("x")).map(norm))
+        .unwrap_or_else(|| if seed % 2 == 0 { 0.28 } else { 0.72 });
+    let ty = dynamic("dynamicY", REF_HEIGHT_DP)
+        .map(|px| (px / REF_HEIGHT_DP).clamp(0.0, 1.0))
+        .or_else(|| json_f32(obj.get("y")).map(norm))
+        .unwrap_or_else(|| 0.14 + (seed % 8) as f32 * 0.09);
 
     let left = (1.0 - norm_w) * tx;
     let top = (1.0 - norm_h) * ty;
@@ -1088,8 +1124,8 @@ fn parse_zalith_rect(obj: &Value, fallback_h: f32) -> (f32, f32, f32, f32) {
     (cx, cy, width_ratio, norm_h)
 }
 
-fn parse_zalith_button(btn: &Value) -> Option<CustomButton> {
-    let (cx, cy, width_ratio, norm_h) = parse_zalith_rect(btn, 0.12);
+fn parse_zalith_button(btn: &Value, seed: usize) -> Option<CustomButton> {
+    let (cx, cy, width_ratio, norm_h) = parse_zalith_rect(btn, 0.12, seed);
     let mut tokens: Vec<String> = Vec::new();
     if let Some(events) = btn.get("clickEvents").and_then(Value::as_array) {
         for ev in events {
@@ -1787,6 +1823,40 @@ impl ExprParser<'_> {
             self.depth -= 1;
             return Some(self.apply_unit(val));
         }
+        // Pojav 3.3+ and Zalith write unit conversions as functions —
+        // `px(58.0)`, `dp(20)`, `dip(4)`, `sp(12)` — and nested in
+        // `${...}` values like `${width} / 2`. Without these the whole
+        // expression failed to parse, `pojav_box` fell back to a spread
+        // slot, and every such button landed on top of the others.
+        if b.is_ascii_alphabetic() {
+            let start = self.pos;
+            while self
+                .bytes
+                .get(self.pos)
+                .is_some_and(|c| c.is_ascii_alphanumeric() || *c == b'_')
+            {
+                self.pos += 1;
+            }
+            let name = std::str::from_utf8(&self.bytes[start..self.pos]).ok()?;
+            if self.bytes.get(self.pos) == Some(&b'(') {
+                if self.depth >= 16 {
+                    return None;
+                }
+                self.pos += 1;
+                self.depth += 1;
+                let inner = self.parse_add_sub()?;
+                self.skip_ws();
+                if self.bytes.get(self.pos) != Some(&b')') {
+                    return None;
+                }
+                self.pos += 1;
+                self.depth -= 1;
+                return Some(self.apply_unit_to(name, inner));
+            }
+            // A bare word is not a number.
+            self.pos = start;
+            return None;
+        }
         if b == b'$' && self.bytes.get(self.pos + 1) == Some(&b'{') {
             self.pos += 2;
             let start = self.pos;
@@ -1836,6 +1906,24 @@ impl ExprParser<'_> {
             .parse::<f32>()
             .ok()?;
         Some(self.apply_unit(num))
+    }
+
+    /// A unit function's value in reference pixels: `px(n)` is already in
+    /// pixels, `dp`/`dip`/`sp` are density-independent.
+    fn apply_unit_to(&self, name: &str, value: f32) -> f32 {
+        if name.eq_ignore_ascii_case("px") {
+            value * self.vars.px_scale
+        } else if name.eq_ignore_ascii_case("dp")
+            || name.eq_ignore_ascii_case("dip")
+            || name.eq_ignore_ascii_case("sp")
+        {
+            value * self.vars.dp_px
+        } else {
+            // An unknown function is not a number: fail the parse rather than
+            // silently treating it as zero, which would place the button at
+            // the origin.
+            f32::NAN
+        }
     }
 
     fn apply_unit(&mut self, value: f32) -> f32 {
@@ -2437,6 +2525,69 @@ mod tests {
             assert!((0.0..=1.0).contains(&c[0]), "off screen x: {c:?}");
             assert!((0.0..=1.0).contains(&c[1]), "off screen y: {c:?}");
         }
+    }
+
+    /// Pojav never stores x/y: it stores `dynamicX`/`dynamicY` expressions
+    /// and evaluates them at load. Real files also use px()/dp() calls and
+    /// `n dp` suffixes. Every one of these must land at its own spot — if an
+    /// expression fails to parse the button falls back to a spread slot, and
+    /// a whole layout of parse failures looks like everything stacked up.
+    #[test]
+    fn pojav_dynamic_expressions_place_each_button_at_its_own_spot() {
+        let pojav = serde_json::json!({
+            "version": 4,
+            "scaledAt": 100,
+            "mControlDataList": [
+                { "name": "Keyboard", "width": 80, "height": 30, "keycodes": [-1],
+                  "dynamicX": "${margin} * 3 + ${width} * 2", "dynamicY": "${margin}" },
+                { "name": "GUI", "width": 50, "height": 50, "keycodes": [-2],
+                  "dynamicX": "${margin}", "dynamicY": "${bottom} - ${margin}" },
+                { "name": "PRI", "width": 50, "height": 50, "keycodes": [-3],
+                  "dynamicX": "${margin}", "dynamicY": "${screen_height} - ${margin} * 3 - ${height} * 3" },
+                { "name": "SEC", "width": 50, "height": 50, "keycodes": [-4],
+                  "dynamicX": "${margin} * 3 + ${width} * 2", "dynamicY": "${screen_height} - ${margin} * 3 - ${height} * 3" },
+                { "name": "Mouse", "width": 80, "height": 30, "keycodes": [-5],
+                  "dynamicX": "${right}", "dynamicY": "${margin}" },
+                { "name": "Sneak", "width": 50, "height": 50, "keycodes": [340],
+                  "dynamicX": "20dp", "dynamicY": "${bottom} - 120dp" },
+                { "name": "Space", "width": 50, "height": 50, "keycodes": [32],
+                  "dynamicX": "${right} - ${margin} * 2 - ${width}",
+                  "dynamicY": "${bottom} - ${margin} * 2 - ${height}" },
+                // Pojav 3.3+ / Zalith unit-function syntax.
+                { "name": "Fn", "width": 50, "height": 50, "keycodes": [70],
+                  "dynamicX": "px(58.0) / 100.0 * ${preferred_scale} + dp(20)",
+                  "dynamicY": "dip(10) * 2" },
+            ],
+        });
+        let imported =
+            import_bytes(&serde_json::to_vec(&pojav).unwrap(), "dyn.json").unwrap();
+        let centers: Vec<[f32; 2]> = imported
+            .settings
+            .custom_buttons
+            .iter()
+            .map(|b| b.layouts[0].center)
+            .collect();
+        assert_eq!(centers.len(), 8, "every control must survive the import");
+        for (i, c) in centers.iter().enumerate() {
+            assert!(
+                (c[0] - 0.5).abs() > 0.02 || (c[1] - 0.5).abs() > 0.02,
+                "control {i} landed at dead centre: {c:?}"
+            );
+            assert!((0.0..=1.0).contains(&c[0]), "control {i} off screen: {c:?}");
+            assert!((0.0..=1.0).contains(&c[1]), "control {i} off screen: {c:?}");
+        }
+        for (i, a) in centers.iter().enumerate() {
+            for (j, b) in centers.iter().enumerate().skip(i + 1) {
+                assert!(
+                    (a[0] - b[0]).abs() > 0.005 || (a[1] - b[1]).abs() > 0.005,
+                    "controls {i} and {j} share a slot: {a:?} {b:?}"
+                );
+            }
+        }
+        // The left-hand pair and the right-hand pair must actually be on
+        // opposite sides, not nudged into the same half.
+        assert!(centers[0][0] < 0.4, "Keyboard should be on the left: {:?}", centers[0]);
+        assert!(centers[4][0] > 0.6, "Mouse should be on the right: {:?}", centers[4][0]);
     }
 
     /// A Pojav file with no `displayInMenu` field means "show on menu
