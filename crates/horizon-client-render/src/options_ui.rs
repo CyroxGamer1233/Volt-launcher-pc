@@ -3227,7 +3227,12 @@ impl OptionsUi {
                     rows
                 };
                 if s.mods.installed.is_empty() {
-                    return std::iter::once(replay).chain(volt_rows).collect();
+                    // Still say there are no installed mods; the built-in Volt
+                    // rows follow the note.
+                    return std::iter::once(replay)
+                        .chain(std::iter::once(Row::Header("horizon.mods.empty")))
+                        .chain(volt_rows)
+                        .collect();
                 }
                 std::iter::once(replay)
                     .chain(s.mods
