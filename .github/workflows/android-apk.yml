@@ -1230,7 +1230,7 @@ jobs:
                       "--min-sdk-version", "21",
                       "--v1-signing-enabled", "true",
                       "--v2-signing-enabled", "true",
-                      "--v3-signing-enabled", "false",
+                      "--v3-signing-enabled", "true",
                       "--v4-signing-enabled", "false",
                       "--out", str(dst_apk),
                       str(aligned_apk),
@@ -1249,7 +1249,7 @@ jobs:
               for scheme in (
                   "Verified using v1 scheme (JAR signing): true",
                   "Verified using v2 scheme (APK Signature Scheme v2): true",
-                  "Verified using v3 scheme (APK Signature Scheme v3): false",
+                  "Verified using v3 scheme (APK Signature Scheme v3): true",
               ):
                   if scheme not in sig_out:
                       raise RuntimeError(f"Unexpected APK signature scheme state: {scheme}\n{sig_out}")
@@ -1292,7 +1292,7 @@ jobs:
               cert_match = re.search(r"SHA-256 digest:\s*([0-9a-fA-F]+)", sig_out)
               cert_sha = cert_match.group(1).lower() if cert_match else "unknown"
               notice_msg = (
-                  f"apk={apk_name} pkg={pkg_line} zipalign16=OK v1=true v2=true v3=false "
+                  f"apk={apk_name} pkg={pkg_line} zipalign16=OK v1=true v2=true v3=true "
                   f"cert_sha256={cert_sha} bytes={size_bytes} sha256={sha256}"
               )
               print(f"\n::notice title=APK Verified::{notice_msg}\n", flush=True)
@@ -1639,7 +1639,7 @@ jobs:
                   "--min-sdk-version", "21",
                   "--v1-signing-enabled", "true",
                   "--v2-signing-enabled", "true",
-                  "--v3-signing-enabled", "false",
+                  "--v3-signing-enabled", "true",
                   "--v4-signing-enabled", "false",
                   "--out", str(dst_apk),
                   str(aligned_apk),

@@ -31,6 +31,8 @@
 
 <sub>The rolling debug build installs as <b>Volt Debug</b>, so it sits beside a stable install. [All releases →](https://github.com/entitybrian69-bit/Volt-launcher/releases)</sub>
 
+<sub>**If Android warns that the APK "may be harmful".** Play Protect shows that for apps it has never seen from Google Play, not only for malware: the build is signed with the same certificate as every Volt release and `SHA256SUMS.txt` on the release page verifies the file. To install, tap **More details → Install anyway** (or **Settings → Apps → Special access → Install unknown apps** for your browser/file manager, then retry). Installs and updates in the launcher itself never show the warning.</sub>
+
 </div>
 
 ---
