@@ -870,164 +870,7 @@ jobs:
         env:
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
           SIGNING_REPO: ${{ github.repository }}
-        run: |
-          python3 - <<'PY'
-          import base64
-          import hashlib
-          import os
-          from pathlib import Path
-          import subprocess
-          import tempfile
-
-          ks_path = Path(".local/android/debug.keystore")
-          ks_path.parent.mkdir(parents=True, exist_ok=True)
-          ks_path.unlink(missing_ok=True)
-          keytool = Path(os.environ["JAVA_HOME"]) / "bin/keytool"
-
-          raw_b64 = os.environ.get("ANDROID_KEYSTORE_BASE64", "").strip()
-          if raw_b64:
-              ks_path.write_bytes(base64.b64decode(raw_b64))
-          else:
-              SMALL_PRIMES = [
-                  p for p in range(3, 2000, 2)
-                  if all(p % d for d in range(3, int(p ** 0.5) + 1, 2))
-              ]
-
-              def is_probable_prime(n: int) -> bool:
-                  for p in SMALL_PRIMES:
-                      if n % p == 0:
-                          return n == p
-                  d = n - 1
-                  r = (d & -d).bit_length() - 1
-                  d >>= r
-                  for a in (2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37):
-                      x = pow(a, d, n)
-                      if x == 1 or x == n - 1:
-                          continue
-                      for _ in range(r - 1):
-                          x = pow(x, 2, n)
-                          if x == n - 1:
-                              break
-                      else:
-                          return False
-                  return True
-
-              def derive_prime(seed: bytes, bits: int = 1024, e: int = 65537) -> int:
-                  counter = 0
-                  blocks = bits // 256
-                  while True:
-                      buf = b"".join(
-                          hashlib.sha256(seed + counter.to_bytes(4, "big") + i.to_bytes(2, "big")).digest()
-                          for i in range(blocks)
-                      )
-                      counter += 1
-                      cand = int.from_bytes(buf, "big")
-                      cand |= (1 << (bits - 1)) | (1 << (bits - 2)) | 1
-                      if (cand - 1) % e != 0 and is_probable_prime(cand):
-                          return cand
-
-              def der_len(n: int) -> bytes:
-                  if n < 0x80:
-                      return bytes([n])
-                  b = n.to_bytes((n.bit_length() + 7) // 8, "big")
-                  return bytes([0x80 | len(b)]) + b
-
-              def der_tlv(tag: int, body: bytes) -> bytes:
-                  return bytes([tag]) + der_len(len(body)) + body
-
-              def der_int(v: int) -> bytes:
-                  b = v.to_bytes(max(1, (v.bit_length() + 7) // 8), "big")
-                  if b[0] & 0x80:
-                      b = b"\x00" + b
-                  return der_tlv(0x02, b)
-
-              def der_seq(*items: bytes) -> bytes:
-                  return der_tlv(0x30, b"".join(items))
-
-              def der_oid(oid: bytes) -> bytes:
-                  return der_tlv(0x06, oid)
-
-              def der_bitstr(b: bytes) -> bytes:
-                  return der_tlv(0x03, b"\x00" + b)
-
-              repo = os.environ.get("SIGNING_REPO", "entitybrian69-bit/Volt-launcher")
-              e = 65537
-              p = derive_prime(f"volt-rsa-p-v1:{repo}".encode(), 1024, e)
-              q = derive_prime(f"volt-rsa-q-v1:{repo}".encode(), 1024, e)
-              if p < q:
-                  p, q = q, p
-              n = p * q
-              phi = (p - 1) * (q - 1)
-              d = pow(e, -1, phi)
-              dp = d % (p - 1)
-              dq = d % (q - 1)
-              qi = pow(q, -1, p)
-
-              rsa_priv = der_seq(
-                  der_int(0), der_int(n), der_int(e), der_int(d),
-                  der_int(p), der_int(q), der_int(dp), der_int(dq), der_int(qi),
-              )
-              rsa_oid = der_seq(der_oid(bytes.fromhex("2a864886f70d010101")), b"\x05\x00")
-              pkcs8_der = der_seq(der_int(0), rsa_oid, der_tlv(0x04, rsa_priv))
-              spki = der_seq(rsa_oid, der_bitstr(der_seq(der_int(n), der_int(e))))
-
-              sha256_rsa = der_seq(der_oid(bytes.fromhex("2a864886f70d01010b")), b"\x05\x00")
-              name = der_seq(der_tlv(0x31, der_seq(
-                  der_oid(bytes.fromhex("550403")),
-                  der_tlv(0x0c, b"Volt Launcher"),
-              )))
-              validity = der_seq(
-                  der_tlv(0x17, b"250101000000Z"),
-                  der_tlv(0x18, b"20550101000000Z"),
-              )
-              tbs = der_seq(
-                  der_tlv(0xa0, der_int(2)),
-                  der_int(1),
-                  sha256_rsa,
-                  name,
-                  validity,
-                  name,
-                  spki,
-              )
-              digest_info = bytes.fromhex("3031300d060960864801650304020105000420") + hashlib.sha256(tbs).digest()
-              em = b"\x00\x01" + (b"\xff" * (256 - 3 - len(digest_info))) + b"\x00" + digest_info
-              sig_bytes = pow(int.from_bytes(em, "big"), d, n).to_bytes(256, "big")
-              cert_der = der_seq(tbs, sha256_rsa, der_bitstr(sig_bytes))
-
-              with tempfile.TemporaryDirectory() as tmp:
-                  t = Path(tmp)
-                  (t / "key.der").write_bytes(pkcs8_der)
-                  (t / "cert.der").write_bytes(cert_der)
-                  subprocess.run(["openssl", "pkey", "-inform", "DER", "-in", str(t / "key.der"), "-out", str(t / "key.pem")], check=True)
-                  subprocess.run(["openssl", "x509", "-inform", "DER", "-in", str(t / "cert.der"), "-out", str(t / "cert.pem")], check=True)
-                  subprocess.run([
-                      "openssl", "pkcs12", "-export",
-                      "-inkey", str(t / "key.pem"),
-                      "-in", str(t / "cert.pem"),
-                      "-name", "androiddebugkey",
-                      "-passout", "pass:android",
-                      "-out", str(t / "stage.p12"),
-                  ], check=True)
-                  subprocess.run([
-                      str(keytool), "-importkeystore",
-                      "-srckeystore", str(t / "stage.p12"),
-                      "-srcstoretype", "PKCS12",
-                      "-srcstorepass", "android",
-                      "-destkeystore", str(ks_path),
-                      "-deststoretype", "PKCS12",
-                      "-deststorepass", "android",
-                      "-noprompt",
-                  ], check=True)
-
-              print("Persistent signing certificate SHA-256:", hashlib.sha256(cert_der).hexdigest(), flush=True)
-
-          subprocess.run([
-              str(keytool), "-list",
-              "-keystore", str(ks_path),
-              "-storepass", "android",
-              "-alias", "androiddebugkey",
-          ], check=True)
-          PY
+        run: python3 .github/scripts/android_keystore.py
 
       - name: Download woven engine library (pinned registry mods)
         if: ${{ (matrix.abi == 'arm64-v8a' || matrix.abi == 'armeabi-v7a') && needs.plan.outputs.profile == 'release' }}
@@ -1622,12 +1465,235 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+  universal:
+    name: Universal APK (every ABI in one file)
+    if: needs.plan.outputs.publish_release == 'true' && needs.plan.outputs.multi_abi == 'true'
+    needs: [plan, build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Download every built per-ABI APK
+        uses: actions/download-artifact@v4
+        with:
+          pattern: Volt-Launcher-*
+          path: .local/android/universal-collect
+
+      - name: Install Android build-tools
+        run: |
+          SDKMANAGER="${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager"
+          if [ ! -x "$SDKMANAGER" ]; then
+            SDKMANAGER="$(command -v sdkmanager)"
+          fi
+          (yes || true) | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" "build-tools;35.0.0"
+
+      - name: Restore or derive persistent signing keystore
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          SIGNING_REPO: ${{ github.repository }}
+        run: python3 .github/scripts/android_keystore.py
+
+      - name: Merge the ABIs into one signed universal APK
+        id: merge
+        env:
+          IS_TAG: ${{ startsWith(github.ref, 'refs/tags/v') }}
+        run: |
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          import re
+          import subprocess
+          import tempfile
+          import zipfile
+
+          def run_checked(cmd):
+              proc = subprocess.run(cmd, capture_output=True, text=True)
+              if proc.returncode != 0:
+                  raise RuntimeError(
+                      f"Command {cmd[0]} exited {proc.returncode}:\nSTDOUT:\n{proc.stdout}\nSTDERR:\n{proc.stderr}"
+                  )
+              return proc.stdout
+
+          order = ["arm64-v8a", "armeabi-v7a", "x86_64", "x86"]
+          collect = Path(".local/android/universal-collect")
+          by_abi = {}
+          for apk in sorted(collect.glob("**/*.apk")):
+              match = re.search(r"-(arm64-v8a|armeabi-v7a|x86_64|x86)\.apk$", apk.name)
+              if match is None:
+                  # A rerun can leave the previous universal APK behind.
+                  print(f"Skipping {apk.name}: not a per-ABI APK", flush=True)
+                  continue
+              by_abi[match.group(1)] = apk
+          present = [abi for abi in order if abi in by_abi]
+          if len(present) < 2:
+              raise SystemExit(
+                  f"Need at least two per-ABI APKs to merge; found {[p.name for p in by_abi.values()]}"
+              )
+
+          gradle_text = Path("packaging/android/build.gradle").read_text(encoding="utf-8")
+          version = re.search(r"versionName '([^']+)'", gradle_text).group(1)
+
+          sdk = Path(os.environ["ANDROID_HOME"])
+          build_tools = max(
+              (sdk / "build-tools").iterdir(),
+              key=lambda p: tuple(int(v) for v in p.name.split(".")),
+          )
+          zipalign = build_tools / "zipalign"
+          aapt2 = build_tools / "aapt2"
+          apksigner_jar = build_tools / "lib/apksigner.jar"
+          java = Path(os.environ["JAVA_HOME"]) / "bin/java"
+          keystore = Path(".local/android/debug.keystore")
+
+          dist = Path(".local/android/dist/universal")
+          dist.mkdir(parents=True, exist_ok=True)
+          apk_name = f"Volt-Launcher-{version}-universal.apk"
+          dst_apk = dist / apk_name
+
+          def entry_order(info):
+              fn = info.filename
+              if fn == "AndroidManifest.xml":
+                  return (0, fn)
+              if fn == "resources.arsc":
+                  return (1, fn)
+              if fn.startswith("classes") and fn.endswith(".dex"):
+                  return (2, fn)
+              if fn.startswith("res/"):
+                  return (3, fn)
+              if fn.startswith("assets/"):
+                  return (4, fn)
+              if fn.startswith("lib/"):
+                  return (5, fn)
+              return (6, fn)
+
+          def signature_entry(name):
+              upper = name.upper()
+              return upper.startswith("META-INF/") and (
+                  upper == "META-INF/MANIFEST.MF"
+                  or upper.endswith((".SF", ".RSA", ".DSA", ".EC"))
+                  or upper.startswith("META-INF/COM/ANDROID/BUILD/")
+                  or upper == "META-INF/VERSION-CONTROL-INFO.TEXTPROTO"
+              )
+
+          def add_entry(zout, name, raw, compress_type):
+              # Native libraries stay uncompressed and page aligned, as the
+              # loader maps them straight out of the APK.
+              must_store = name == "resources.arsc" or (
+                  name.startswith("lib/") and name.endswith(".so")
+              )
+              ctype = zipfile.ZIP_STORED if must_store else compress_type
+              info = zipfile.ZipInfo(filename=name, date_time=(2025, 1, 1, 0, 0, 0))
+              info.compress_type = ctype
+              info.external_attr = 0o644 << 16
+              info.create_system = 3
+              zout.writestr(info, raw, compress_type=ctype)
+
+          with tempfile.TemporaryDirectory() as tmp:
+              t = Path(tmp)
+              unsigned_apk = t / "unsigned.apk"
+              aligned_apk = t / "aligned.apk"
+              seen = set()
+              written = []
+              with zipfile.ZipFile(unsigned_apk, "w") as zout:
+                  # The arm64 build carries the highest versionCode and the
+                  # manifest, resources and dex every ABI shares.
+                  for abi in present:
+                      source = by_abi[abi]
+                      with zipfile.ZipFile(source, "r") as zin:
+                          for info in sorted(zin.infolist(), key=entry_order):
+                              name = info.filename
+                              if info.is_dir() or name in seen:
+                                  continue
+                              if signature_entry(name):
+                                  continue
+                              if abi != present[0] and not (
+                                  name.startswith(f"lib/{abi}/") and name.endswith(".so")
+                              ):
+                                  # Only the other ABIs' native libraries are new.
+                                  continue
+                              seen.add(name)
+                              add_entry(zout, name, zin.read(name), info.compress_type)
+                              written.append(name)
+
+              libs = sorted({name.split("/")[1] for name in written if name.startswith("lib/")})
+              if libs != sorted(present):
+                  raise SystemExit(f"Universal APK would carry {libs}, expected {sorted(present)}")
+
+              run_checked([str(zipalign), "-P", "16", "-f", "4", str(unsigned_apk), str(aligned_apk)])
+              run_checked([
+                  str(java), "-jar", str(apksigner_jar), "sign",
+                  "--ks", str(keystore),
+                  "--ks-type", "PKCS12",
+                  "--ks-pass", "pass:android",
+                  "--ks-key-alias", "androiddebugkey",
+                  "--key-pass", "pass:android",
+                  "--min-sdk-version", "21",
+                  "--v1-signing-enabled", "true",
+                  "--v2-signing-enabled", "true",
+                  "--v3-signing-enabled", "false",
+                  "--v4-signing-enabled", "false",
+                  "--out", str(dst_apk),
+                  str(aligned_apk),
+              ])
+
+          run_checked([str(zipalign), "-c", "-P", "16", "4", str(dst_apk)])
+          run_checked([str(zipalign), "-c", "4", str(dst_apk)])
+          run_checked([
+              str(java), "-jar", str(apksigner_jar), "verify",
+              "--min-sdk-version", "21",
+              "--print-certs",
+              str(dst_apk),
+          ])
+          pkg_line = ""
+          for line in run_checked([str(aapt2), "dump", "badging", str(dst_apk)]).splitlines():
+              if line.startswith("package:"):
+                  pkg_line = line
+                  break
+          is_tag = os.environ.get("IS_TAG", "false").lower() == "true"
+          expected_id = "ae.net.Voltlauncher" if is_tag else "ae.net.Voltlauncher.debug"
+          if f"name='{expected_id}'" not in pkg_line:
+              raise SystemExit(f"Universal APK has the wrong package: {pkg_line}")
+          vn = re.search(r"versionName='([^']+)'", pkg_line)
+          if vn is None or vn.group(1) != version:
+              raise SystemExit(f"Universal APK versionName mismatch: {pkg_line}")
+
+          size_mb = dst_apk.stat().st_size / (1024 * 1024)
+          print(
+              f"Universal APK {apk_name}: {size_mb:.1f} MB, ABIs {', '.join(libs)}",
+              flush=True,
+          )
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as out:
+              out.write(f"version={version}\n")
+          print(
+              f"::notice title=Universal APK built::{apk_name} ({size_mb:.1f} MB, "
+              f"{', '.join(libs)}), signed with the persistent debug certificate\n",
+              flush=True,
+          )
+          PY
+
+      - name: Upload universal APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Volt-Launcher-${{ steps.merge.outputs.version }}-universal
+          path: .local/android/dist/universal/*.apk
+          if-no-files-found: error
+          retention-days: 30
+
   release:
     name: Publish GitHub Release
     if: needs.plan.outputs.publish_release == 'true'
-    needs: [plan, build, worldgen-test, runtime-proof]
+    needs: [plan, build, universal, worldgen-test, runtime-proof]
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 25
     permissions:
       contents: write
     steps:
