@@ -158,24 +158,13 @@ impl Game<'_> {
             );
         }
 
-        // Auto-DRS & Mobile Thermal Guard dynamic 3D resolution controller
-        let drs_cfg = self.settings.extras.auto_drs.target_and_floor();
+        // No dynamic 3D resolution any more. Volt Boost's presets used to
+        // shrink it - Ultra FPS as far as half - and every model, the players
+        // included, came out looking low. The world now always draws at the
+        // resolution the video settings ask for; the thermal guard only thins
+        // particles, which it already does below.
         let thermal_on = self.settings.extras.thermal_guard;
-        let desired_drs = if playing && (drs_cfg.is_some() || thermal_on) {
-            let (target_fps, floor) = drs_cfg.unwrap_or((60.0, 0.72));
-            let target_ms = 1000.0 / target_fps;
-            let mut s = self.extras.drs_scale;
-            if self.extras.ema_frame_ms > target_ms * 1.12 {
-                s = (s - 0.04).max(floor);
-            } else if thermal_on && self.extras.ema_frame_ms > 24.0 {
-                s = (s - 0.05).max(0.70);
-            } else if self.extras.ema_frame_ms < target_ms * 0.80 {
-                s = (s + 0.02).min(1.0);
-            }
-            s
-        } else {
-            1.0
-        };
+        let desired_drs: f32 = 1.0;
         if (desired_drs - self.extras.drs_scale).abs() >= 0.035
             && now - self.extras.last_drs_apply_at >= 0.45
         {

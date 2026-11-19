@@ -4964,13 +4964,6 @@ impl DrawCtx<'_> {
                 true,
             ),
             (
-                "Auto-DRS dynamic scale",
-                Item::VoltAutoDrs.value(ex),
-                Action::VoltExtra(Item::VoltAutoDrs),
-                None,
-                false,
-            ),
-            (
                 "Display refresh rate",
                 c.device.display_label(),
                 Action::DisplayHz,
@@ -8476,9 +8469,8 @@ fn draw_volt_boost_modal(
         );
     }
 
-    let items: [Item; 31] = [
+    let items: [Item; 30] = [
         Item::VoltPerfHud,
-        Item::VoltAutoDrs,
         Item::VoltCullLeaves,
         Item::VoltFrustumMesh,
         Item::VoltLookaheadStream,

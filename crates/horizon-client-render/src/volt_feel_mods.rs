@@ -23,6 +23,14 @@ pub struct MotionBlur {
     last: Option<(f32, f32)>,
     /// Turn magnitude of the frame that just ended, in degrees.
     velocity: f32,
+    /// The same turn as the movement of the view direction across the
+    /// screen's own axes (right, up) in radians: what a screen-space motion
+    /// blur needs, sign and all.
+    delta: (f32, f32),
+    /// When the last frame was measured, for the refresh-rate scaling.
+    last_at: Option<Instant>,
+    /// How long that frame took, in seconds.
+    frame_seconds: f32,
 }
 
 impl MotionBlur {
@@ -33,12 +41,17 @@ impl MotionBlur {
     /// always sharp: a blur there would look like a stutter on world load.
     pub fn frame(&mut self, yaw: f32, pitch: f32, strength: f32) -> f32 {
         if !yaw.is_finite() || !pitch.is_finite() {
-            self.last = None;
-            self.velocity = 0.0;
+            self.reset();
             return 0.0;
         }
+        let now = Instant::now();
+        self.frame_seconds = self
+            .last_at
+            .replace(now)
+            .map_or(0.0, |last| now.saturating_duration_since(last).as_secs_f32());
         let Some((last_yaw, last_pitch)) = self.last.replace((yaw, pitch)) else {
             self.velocity = 0.0;
+            self.delta = (0.0, 0.0);
             return 0.0;
         };
         // Yaw wraps at 360, so the short way round is the real turn: whipping
@@ -51,6 +64,14 @@ impl MotionBlur {
         }
         let dpitch = pitch - last_pitch;
         self.velocity = dyaw.hypot(dpitch);
+        // How far the view direction swept across the screen's own axes, for
+        // a screen-space blur: yaw turns the camera along its right axis
+        // (less and less as it looks further up or down), pitch along its up
+        // axis, and the picture slides the other way.
+        self.delta = (
+            dyaw.to_radians() * pitch.to_radians().cos(),
+            -dpitch.to_radians(),
+        );
         self.radius(strength)
     }
 
@@ -70,12 +91,26 @@ impl MotionBlur {
         self.velocity
     }
 
+    /// The turn of the last frame across the screen's own axes, in radians
+    /// (right, up). A screen-space blur slides the picture the opposite way.
+    pub fn delta(&self) -> (f32, f32) {
+        self.delta
+    }
+
+    /// How long the last measured frame took, in seconds (0.0 on the first).
+    pub fn frame_seconds(&self) -> f32 {
+        self.frame_seconds
+    }
+
     /// Forget the previous angle, so the next frame is sharp again. Called
     /// when the camera jumps rather than turning (teleport, respawn, a
     /// perspective switch), which would otherwise smear across the cut.
     pub fn reset(&mut self) {
         self.last = None;
+        self.last_at = None;
         self.velocity = 0.0;
+        self.delta = (0.0, 0.0);
+        self.frame_seconds = 0.0;
     }
 }
 

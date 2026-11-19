@@ -14590,6 +14590,7 @@ impl Game<'_> {
                 .boss_overlay
                 .darken_amount(self.clock.fraction() as f32),
             menu_blur: self.menu_blur(),
+            motion_blur: self.motion_blur_params(),
             post_effects: horizon_client::post_chain::Request {
                 effects: &requested_post_effects,
                 root: &self.options.resources,
@@ -14707,19 +14708,6 @@ impl Game<'_> {
     /// `Screen.extractBlurredBackground` over the panorama or the world and
     /// HUD, when `menuBackgroundBlurriness` is at least 1.
     fn menu_blur(&self) -> Option<f32> {
-        // Motion Blur first: the fast menu background is about screens, and
-        // bailing out on it here is what kept the mod from ever running on a
-        // profile that had picked "Fast dark".
-        if self.title.is_none() && self.screen == Screen::Playing && self.motion_blur_on() {
-            let strength = self.motion_blur_strength;
-            if strength > 0.02 {
-                // The radius climbs with the strength knob (1..=5) and the
-                // turn speed, so a flick is unmistakable and standing still
-                // is perfectly still.
-                let knob = f32::from(self.settings.extras.motion_blur_strength.clamp(1, 5));
-                return Some(2.0 + strength * (3.0 + knob * 2.0));
-            }
-        }
         if self.settings.extras.menu_bg_mode
             == horizon_client::volt_features::MenuBgMode::FastDark
         {
@@ -14742,6 +14730,66 @@ impl Game<'_> {
             return Some(radius);
         }
         None
+    }
+    /// The Motion Blur mod's request for this frame: Natural Motion Blur's
+    /// strength slider, algorithm and profile, driven by the camera's own
+    /// turn. `None` means "draw it sharp", which is also what happens while
+    /// standing still: no turn, no smear.
+    fn motion_blur_params(&self) -> Option<horizon_client::motion_blur::Params> {
+        use horizon_client::motion_blur::{Algorithm, Params, Profile};
+        if self.title.is_some() || self.screen != Screen::Playing || !self.motion_blur_on() {
+            return None;
+        }
+        // The slider is the mod's 1..10 and is already folded into the
+        // response the camera step measured (3, the old default, is calm).
+        let strength = self.motion_blur_strength;
+        let strength = if self.settings.extras.motion_blur_refresh_scale {
+            Params {
+                strength: strength.min(1.0),
+                ..Default::default()
+            }
+            .scaled_strength(self.motion_blur.frame_seconds(), 60.0, true)
+        } else {
+            strength.min(1.0)
+        };
+        if strength <= 0.004 {
+            return None;
+        }
+        // Degrees of view swept per screen: the vertical FOV from the video
+        // settings, the horizontal one widened by the frame's aspect.
+        let fov_y = self.settings.fov.clamp(30.0, 130.0).to_radians();
+        let aspect = self
+            .window
+            .as_ref()
+            .map(|w| {
+                let size = w.inner_size();
+                if size.height == 0 {
+                    1.777
+                } else {
+                    size.width as f32 / size.height as f32
+                }
+            })
+            .unwrap_or(1.777);
+        let fov_x = 2.0 * ((fov_y * 0.5).tan() * aspect).atan();
+        let (right, up) = self.motion_blur.delta();
+        // The picture slides against the turn, so the smear trails it. The
+        // shutter is what turns "how far the view swept" into "how long the
+        // smear is": the mod's taps reach well past one frame's worth.
+        const SHUTTER: f32 = 2.0;
+        let velocity = [
+            (-right * SHUTTER / fov_x.max(0.05)).clamp(-0.4, 0.4),
+            (up * SHUTTER / fov_y.max(0.05)).clamp(-0.4, 0.4),
+        ];
+        Some(Params {
+            velocity,
+            strength,
+            samples: Params::samples_for(strength),
+            profile: Profile::from_index(self.settings.extras.motion_blur_profile),
+            algorithm: Algorithm::from_index(self.settings.extras.motion_blur_algorithm),
+            // The mod fades the previous frame by the strength; the
+            // accumulation algorithms need a floor or they never show.
+            blend: (0.35 + strength * 0.5).clamp(0.0, 0.9),
+        })
     }
     /// `LevelExtractor` / `LevelRenderer`: the world border wall this frame.
     fn border_draw(
@@ -19118,6 +19166,7 @@ pub(crate) fn loading_frame(hud: &HudBatch) -> Frame<'_> {
         chunk_fade: 0.0,
         post_effects: horizon_client::post_chain::Request::none(),
         menu_blur: None,
+        motion_blur: None,
     }
 }
 

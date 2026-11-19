@@ -5241,7 +5241,6 @@ impl Game<'_> {
             .entity_cap
             .limit()
             .unwrap_or(usize::MAX);
-        let hub_shield = self.settings.extras.hub_lag_shield && self.mobs.len() > 24;
         let throttle_distant = self.settings.extras.distant_mob_throttle;
         let mut sorted: Vec<(usize, f64)> = Vec::new();
         if max_entities < usize::MAX && self.mobs.len() > max_entities {
@@ -5253,7 +5252,11 @@ impl Game<'_> {
                 let d_sq = (glam::DVec3::new(mob.position.x, mob.position.y, mob.position.z)
                     - camera)
                     .length_squared();
-                if hub_shield && d_sq > 18.0 * 18.0 && &*mob.kind.id == "minecraft:player" {
+                // A player is never dropped or pushed down the list: the
+                // entity cap must not be what makes another player render
+                // worse (Ultra FPS used to hide every player past 18 blocks).
+                if &*mob.kind.id == "minecraft:player" {
+                    sorted.push((idx, -1.0));
                     continue;
                 }
                 sorted.push((idx, d_sq));
@@ -5294,9 +5297,6 @@ impl Game<'_> {
             }
             let d = glam::DVec3::new(mob.position.x, mob.position.y, mob.position.z) - camera;
             let d_sq = d.length_squared();
-            if hub_shield && is_player && d_sq > 18.0 * 18.0 {
-                continue;
-            }
             // Volt "Frame items" (Volt Settings > Frame items): per-category
             // loading toggle + draw distance. Defaults (on + Unlimited) keep
             // vanilla behavior exactly. The local player's own body renders
@@ -5384,7 +5384,9 @@ impl Game<'_> {
                 .mod_catalog
                 .is_on(horizon_client::volt_mods::VoltModId::NotEnoughAnimations);
             let smooth_cutoff = if emf_on { 40.0 * 40.0 } else { 24.0 * 24.0 };
-            let mob_alpha = if throttle_distant && d_sq > smooth_cutoff {
+            // A player keeps its interpolation at any distance: freezing
+            // its pose is the "low" look the Ultra FPS profile had.
+            let mob_alpha = if throttle_distant && !is_player && d_sq > smooth_cutoff {
                 0.0
             } else {
                 alpha
@@ -5473,21 +5475,22 @@ impl Game<'_> {
                 // Only the cape hides with the body; WingsLayer and
                 // SpinAttackEffectLayer have no `isInvisible` check.
                 let chest = mob.extra.chest.as_deref();
-                let skip_distant_cosmetics = throttle_distant && d_sq > 24.0 * 24.0;
-                if !layers_only && !skip_distant_cosmetics {
+                // Player cosmetics always draw in full, however far away the
+                // player is: a cape, ears or stuck arrows dropped for being
+                // distant is exactly the downgrade that was reported.
+                if !layers_only {
                     self.player_cape_geometry(mob, chest, camera, mob_alpha as f32, packed, out);
                 }
-                if !skip_distant_cosmetics
-                    && let Some((_, name)) = self
-                        .remote_player_names()
-                        .into_iter()
-                        .find(|(id, _)| *id == mob.id)
+                if let Some((_, name)) = self
+                    .remote_player_names()
+                    .into_iter()
+                    .find(|(id, _)| *id == mob.id)
                 {
                     self.player_ears_geometry(mob, &name, camera, mob_alpha as f32, packed, out);
                 }
                 self.player_elytra_geometry(mob, chest, camera, mob_alpha as f32, packed, out);
                 self.spin_attack_geometry(mob, camera, mob_alpha as f32, packed, out);
-                if !skip_distant_cosmetics {
+                {
                     self.stuck_in_body_geometry(
                         mob,
                         mob.id as i32,

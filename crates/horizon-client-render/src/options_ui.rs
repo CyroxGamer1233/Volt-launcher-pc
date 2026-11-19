@@ -3239,9 +3239,12 @@ impl OptionsUi {
                         // where the mod is turned on. Filtered out by the
                         // caption when a search is running.
                         let knobs: &[crate::extras::Item] = match id {
-                            crate::volt_mods::VoltModId::MotionBlur => {
-                                &[crate::extras::Item::MotionBlurStrength]
-                            }
+                            crate::volt_mods::VoltModId::MotionBlur => &[
+                                crate::extras::Item::MotionBlurStrength,
+                                crate::extras::Item::MotionBlurAlgorithm,
+                                crate::extras::Item::MotionBlurProfile,
+                                crate::extras::Item::MotionBlurRefreshScale,
+                            ],
                             crate::volt_mods::VoltModId::HitReg => {
                                 &[crate::extras::Item::HitRegReadout]
                             }

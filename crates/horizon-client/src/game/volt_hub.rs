@@ -306,6 +306,12 @@ impl Game<'_> {
         phase: winit::event::TouchPhase,
     ) -> bool {
         use winit::event::TouchPhase;
+        // The badge's own full-screen page owns every touch while it is
+        // open: the logo underneath must not start a drag.
+        if self.volt_hub.badge_menu {
+            self.volt_hub.drag = None;
+            return false;
+        }
         // The logo is drawn inside the same safe-area inset as the hub.
         let p = self.volt_hub_inset_cursor(p);
         // A badge the user turned off is not there: it takes no touches.
@@ -836,7 +842,7 @@ impl Game<'_> {
         let badge_hidden = self.settings.extras.volt_badge_hidden;
         let badge_alpha =
             (f32::from(self.settings.extras.volt_badge_opacity) / 100.0).clamp(0.1, 1.0);
-        if !open && !badge_hidden {
+        if !open && !self.volt_hub.badge_menu && !badge_hidden {
             // The floating Volt logo on a soft dark chip; crimson while
             // recording. Its rect stays in GUI coordinates for the drag
             // gesture, so convert for drawing only.
@@ -870,135 +876,147 @@ impl Game<'_> {
             }
         }
 
-        // The badge's own window, opened by holding it down: size, opacity
-        // and an off switch, exactly where the user's finger already is.
+        // The badge's own page, opened by holding it down: a full-screen
+        // window with the size, the opacity and the off switch, so every
+        // control is a real, finger-sized target instead of a 196px popup.
         if self.volt_hub.badge_menu && !open {
-            let [bx, by, bs, _] = logo_rect;
-            let (bx, by, bs) = (bx * kd, by * kd, bs * kd);
-            let w = 196.0;
-            let row = 26.0;
-            let head = 26.0;
-            let h = head + row * 4.0 + 8.0;
-            let x = bx.clamp(6.0, (ui.w - w - 6.0).max(6.0));
-            // Below the badge when it fits, above it otherwise.
-            let y = if by + bs + 8.0 + h <= ui.h - 6.0 {
-                by + bs + 8.0
-            } else {
-                (by - 8.0 - h).max(6.0)
-            };
-            ui.rounded(x, y, w, h, 12.0, PANEL);
-            ui.border(x, y, w, h, 12.0, 0x5A3C14DC);
-            ui.rounded(x, y, w, 3.0, 1.5, CRIMSON);
-            ui.text(Face::LauncherMedium, 11.5, x + 10.0, y + 7.0, DIM, "VOLT BADGE");
+            let (vw, vh) = (ui.w, ui.h);
+            let pad = (vw * 0.045).clamp(14.0, 28.0);
+            let cw = vw - pad * 2.0;
+            ui.rounded(0.0, 0.0, vw, vh, 0.0, 0xF70A0908);
+            // Header: the logo, the title, and a Done chip on the right.
+            let head_h = 58.0;
+            ui.rounded(0.0, 0.0, vw, head_h, 0.0, PANEL);
+            ui.rounded(0.0, head_h - 1.5, vw, 1.5, 0.75, CRIMSON);
+            ui.volt_logo(pad, 15.0, 28.0, 28.0);
+            ui.text(Face::LauncherMedium, 15.5, pad + 36.0, 13.0, TEXT, "V badge");
+            ui.text(
+                Face::LauncherRegular,
+                11.0,
+                pad + 36.0,
+                33.0,
+                DIM,
+                "The floating V button",
+            );
+            let (dw, dh) = (84.0, 32.0);
+            let (dx, dy) = (vw - pad - dw, 13.0);
+            ui.rounded(dx, dy, dw, dh, 9.0, ROW);
+            ui.border(dx, dy, dw, dh, 9.0, 0x5A3C14DC);
+            let tw = ui.measure(Face::LauncherMedium, 12.5, "Done");
+            ui.text(
+                Face::LauncherMedium,
+                12.5,
+                dx + (dw - tw) / 2.0,
+                dy + 8.0,
+                TEXT,
+                "Done",
+            );
+            targets.push(([dx * dk, dy * dk, dw * dk, dh * dk], Act::Close));
 
             let sizes = horizon_client::extras::VOLT_BADGE_SIZES;
             let ops = horizon_client::extras::VOLT_BADGE_OPACITIES;
             let size = self.settings.extras.volt_badge_size;
             let op = self.settings.extras.volt_badge_opacity;
-            let mut stepper = |ui: &mut Ui,
-                               targets: &mut Vec<([f32; 4], Act)>,
-                               ry: f32,
-                               label: &str,
-                               value: String,
-                               minus: Act,
-                               plus: Act,
-                               can_minus: bool,
-                               can_plus: bool| {
-                ui.text(
-                    Face::LauncherMedium,
-                    12.0,
-                    x + 10.0,
-                    ry + 6.0,
-                    TEXT,
-                    label,
-                );
-                let vw = ui.measure(Face::LauncherRegular, 11.5, &value);
-                ui.text(
-                    Face::LauncherRegular,
-                    11.5,
-                    x + w - 54.0 - vw,
-                    ry + 6.5,
-                    DIM,
-                    &value,
-                );
-                for (gx, glyph, act, on) in [
-                    (x + w - 48.0, "-", minus, can_minus),
-                    (x + w - 24.0, "+", plus, can_plus),
-                ] {
-                    ui.rounded(gx, ry + 2.0, 20.0, 20.0, 6.0, ROW);
-                    let gw = ui.measure(Face::LauncherMedium, 12.0, glyph);
+            let row_h = 74.0;
+            let mut ry = head_h + 18.0;
+            // A setting card: caption, big value, and a minus/plus pair on
+            // the right, both 46 dp tall so a thumb finds them.
+            let mut card = |ui: &mut Ui,
+                            targets: &mut Vec<([f32; 4], Act)>,
+                            ry: f32,
+                            label: &str,
+                            hint: &str,
+                            value: String,
+                            minus: Act,
+                            plus: Act,
+                            can_minus: bool,
+                            can_plus: bool| {
+                ui.rounded(pad, ry, cw, row_h, 12.0, PANEL);
+                ui.border(pad, ry, cw, row_h, 12.0, 0x5A3C14DC);
+                ui.text(Face::LauncherMedium, 13.5, pad + 14.0, ry + 12.0, TEXT, label);
+                ui.text(Face::LauncherRegular, 10.5, pad + 14.0, ry + 32.0, DIM, hint);
+                let bw = 46.0;
+                let bh = 46.0;
+                let by = ry + (row_h - bh) / 2.0;
+                let px = pad + cw - bw - 10.0;
+                let mx = px - bw - 62.0;
+                for (bx, glyph, act, on) in [(mx, "-", minus, can_minus), (px, "+", plus, can_plus)] {
+                    ui.rounded(bx, by, bw, bh, 10.0, if on { ROW } else { 0x33120F0C });
+                    let gw = ui.measure(Face::LauncherMedium, 20.0, glyph);
                     ui.text(
                         Face::LauncherMedium,
-                        12.0,
-                        gx + (20.0 - gw) / 2.0,
-                        ry + 5.0,
+                        20.0,
+                        bx + (bw - gw) / 2.0,
+                        by + 10.0,
                         if on { TEXT } else { 0x55FFFFFF },
                         glyph,
                     );
                     if on {
-                        targets.push(([gx * dk, (ry + 2.0) * dk, 20.0 * dk, 20.0 * dk], act));
+                        targets.push(([bx * dk, by * dk, bw * dk, bh * dk], act));
                     }
                 }
+                let vw2 = ui.measure(Face::LauncherMedium, 17.0, &value);
+                ui.text(
+                    Face::LauncherMedium,
+                    17.0,
+                    mx + bw + (62.0 - vw2) / 2.0,
+                    ry + 26.0,
+                    CRIMSON,
+                    &value,
+                );
             };
             let i = sizes.iter().position(|&v| v == size);
-            stepper(
+            card(
                 &mut ui,
                 &mut targets,
-                y + head,
+                ry,
                 "Size",
+                "How big the badge is on screen",
                 format!("{size} px"),
                 Act::BadgeSize(false),
                 Act::BadgeSize(true),
                 i.is_some_and(|i| i > 0),
                 i.is_none_or(|i| i + 1 < sizes.len()),
             );
+            ry += row_h + 14.0;
             let j = ops.iter().position(|&v| v == op);
-            stepper(
+            card(
                 &mut ui,
                 &mut targets,
-                y + head + row,
+                ry,
                 "Opacity",
+                "How solid the badge looks",
                 format!("{op}%"),
                 Act::BadgeOpacity(false),
                 Act::BadgeOpacity(true),
                 j.is_some_and(|j| j > 0),
                 j.is_none_or(|j| j + 1 < ops.len()),
             );
-            // Off, and done.
-            let off_y = y + head + row * 2.0;
-            ui.rounded(x + 8.0, off_y + 1.0, w - 16.0, 22.0, 7.0, ROW);
+            ry += row_h + 24.0;
+            // Turn the badge off, and the way back in from the settings page.
+            let off_h = 52.0;
+            ui.rounded(pad, ry, cw, off_h, 12.0, 0x2E1410CC);
             ui.text(
                 Face::LauncherMedium,
-                12.0,
-                x + 16.0,
-                off_y + 6.0,
+                14.0,
+                pad + 16.0,
+                ry + 15.0,
                 CRIMSON,
                 "Turn off the V badge",
             );
-            targets.push((
-                [(x + 8.0) * dk, (off_y + 1.0) * dk, (w - 16.0) * dk, 22.0 * dk],
-                Act::BadgeOff,
-            ));
-            let done_y = y + head + row * 3.0;
-            ui.rounded(x + 8.0, done_y + 1.0, w - 16.0, 22.0, 7.0, ROW);
-            let dw = ui.measure(Face::LauncherMedium, 12.0, "Done");
-            ui.text(
-                Face::LauncherMedium,
-                12.0,
-                x + (w - dw) / 2.0,
-                done_y + 6.0,
-                TEXT,
-                "Done",
+            targets.push(([pad * dk, ry * dk, cw * dk, off_h * dk], Act::BadgeOff));
+            ry += off_h + 12.0;
+            let note = ui.fit_text(
+                Face::LauncherRegular,
+                11.0,
+                "Off hides it until you turn it back on in Options > Volt Settings > V badge.",
+                cw,
             );
-            targets.push((
-                [(x + 8.0) * dk, (done_y + 1.0) * dk, (w - 16.0) * dk, 22.0 * dk],
-                Act::Close,
-            ));
-            // The panel body itself swallows taps (pushed after the rows so
-            // the buttons keep priority), and anywhere else dismisses the
-            // menu without poking the world underneath.
-            targets.push(([x * dk, y * dk, w * dk, h * dk], Act::BadgePanel));
-            targets.push(([0.0, 0.0, ui.w * dk, ui.h * dk], Act::BadgeClose));
+            ui.text(Face::LauncherRegular, 11.0, pad + 4.0, ry, DIM, &note);
+
+            // A full-screen catch-all, so a tap that misses a control is
+            // swallowed by the page instead of reaching the world below.
+            targets.push(([0.0, 0.0, vw * dk, vh * dk], Act::BadgePanel));
         }
 
         if t > 0.0 {
