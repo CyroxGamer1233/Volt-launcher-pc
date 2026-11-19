@@ -923,7 +923,7 @@ mod tests {
             "key.keyboard.unknown".into(),
             "key.keyboard.g".into(),
         ];
-        btn.sanitize();
+        btn.sanitize(false);
         assert_eq!(
             btn.extra_keys,
             [
