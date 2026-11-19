@@ -1535,8 +1535,13 @@ mod tests {
     #[test]
     fn sliding_a_finger_carries_the_press_between_controls() {
         use crate::gamepad::Button;
-        let mut t = TouchControls::default();
-        t.viewport(1920, 1080);
+        // Lay the pad out from the built-in defaults, never from a layout
+        // file a developer's device may have left behind.
+        let mut t = TouchControls {
+            aspect: 1920.0 / 1080.0,
+            loaded: true,
+            ..Default::default()
+        };
         t.settings.button_visibility[Control::Jump as usize] = 1;
         t.settings.button_visibility[Control::Attack as usize] = 1;
         let jump = t.placement(Control::Jump).center;
