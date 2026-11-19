@@ -1,10 +1,11 @@
-//! One-time ABI-matched Volt Launcher update reminder.
+//! One-time ABI-matched Volt Launcher update reminder, plus the in-app
+//! downloader behind its Update button.
 //!
-//! Deliberately hands the actual APK download to the user's browser instead of
-//! downloading and installing in-app: Volt therefore never requests the
-//! `REQUEST_INSTALL_PACKAGES` permission or touches `PackageInstaller`, both of
-//! which make Google Play Protect flag sideloaded apps as potentially harmful
-//! at install time.
+//! The APK is fetched here, byte by byte, into the profile's own folder and
+//! then handed to the system installer through `PackageInstaller` (see
+//! `HorizonActivity.installApk`), so updating no longer bounces the player out
+//! to a browser. Volt therefore asks for `REQUEST_INSTALL_PACKAGES`; Android
+//! still shows its own confirmation before anything is replaced.
 use serde::{Deserialize, Serialize};
 use std::{
     io::Read,
@@ -205,6 +206,120 @@ pub fn spawn_manual_check(home: PathBuf) -> mpsc::Receiver<Option<UpdateInfo>> {
         .name("volt-update-check".into())
         .spawn(move || {
             let _ = tx.send(check_once_blocking(&home, true));
+        })
+        .ok();
+    rx
+}
+
+/// Where a downloaded update is kept until the installer takes it.
+pub const UPDATE_DIR: &str = "volt-updates";
+
+/// One step of an in-app update download.
+#[derive(Debug)]
+pub enum DownloadUpdate {
+    /// Bytes written so far, and the asset's size when GitHub announced it.
+    Progress(u64, u64),
+    /// The finished APK, handed to the installer next.
+    Ready(PathBuf),
+    Failed(String),
+}
+
+/// Fetches `info`'s APK into `home/volt-updates/` and reports progress as it
+/// writes. The final message is either [`DownloadUpdate::Ready`] with the file
+/// or [`DownloadUpdate::Failed`] with something a player can read.
+pub fn spawn_download(home: PathBuf, info: UpdateInfo) -> mpsc::Receiver<DownloadUpdate> {
+    let (tx, rx) = mpsc::channel();
+    std::thread::Builder::new()
+        .name("volt-update-download".into())
+        .stack_size(1024 * 1024)
+        .spawn(move || {
+            let dir = home.join(UPDATE_DIR);
+            let name = if info.asset_name.trim().is_empty() {
+                "volt-update.apk".to_owned()
+            } else {
+                info.asset_name.clone()
+            };
+            let target = dir.join(&name);
+            let send = |m| {
+                let _ = tx.send(m);
+            };
+            if let Some(parent) = target.parent()
+                && std::fs::create_dir_all(parent).is_err()
+            {
+                send(DownloadUpdate::Failed(
+                    "Could not make room for the update on this device.".into(),
+                ));
+                return;
+            }
+            let agent = ureq::AgentBuilder::new()
+                .https_only(true)
+                .user_agent(&format!("VoltLauncher/{}", crate::backend::VERSION))
+                .timeout_connect(Duration::from_secs(15))
+                .timeout_read(Duration::from_secs(60))
+                .build();
+            let resp = match agent.get(&info.download_url).call() {
+                Ok(resp) => resp,
+                Err(e) => {
+                    send(DownloadUpdate::Failed(format!(
+                        "The update download could not start: {e}"
+                    )));
+                    return;
+                }
+            };
+            let total = resp
+                .header("content-length")
+                .and_then(|v| v.parse::<u64>().ok())
+                .filter(|v| *v > 0)
+                .unwrap_or(info.size_bytes);
+            let mut reader = resp.into_reader();
+            let mut file = match std::fs::File::create(&target) {
+                Ok(file) => file,
+                Err(e) => {
+                    send(DownloadUpdate::Failed(format!(
+                        "Could not save the update: {e}"
+                    )));
+                    return;
+                }
+            };
+            let mut buffer = vec![0u8; 64 * 1024];
+            let mut written: u64 = 0;
+            let mut last_report: u64 = 0;
+            loop {
+                let read = match reader.read(&mut buffer) {
+                    Ok(0) => break,
+                    Ok(n) => n,
+                    Err(e) => {
+                        let _ = std::fs::remove_file(&target);
+                        send(DownloadUpdate::Failed(format!(
+                            "The update download stopped partway: {e}"
+                        )));
+                        return;
+                    }
+                };
+                if std::io::Write::write_all(&mut file, &buffer[..read]).is_err() {
+                    let _ = std::fs::remove_file(&target);
+                    send(DownloadUpdate::Failed(
+                        "Could not write the update to this device's storage.".into(),
+                    ));
+                    return;
+                }
+                written += read as u64;
+                if written - last_report >= 512 * 1024 {
+                    last_report = written;
+                    send(DownloadUpdate::Progress(written, total));
+                }
+            }
+            let _ = std::io::Write::flush(&mut file);
+            drop(file);
+            if written == 0 || (total > 0 && written != total) {
+                let _ = std::fs::remove_file(&target);
+                send(DownloadUpdate::Failed(format!(
+                    "The update download was incomplete ({written} of {total} bytes)."
+                )));
+                return;
+            }
+            send(DownloadUpdate::Progress(written, written));
+            send(DownloadUpdate::Ready(target));
         })
         .ok();
     rx

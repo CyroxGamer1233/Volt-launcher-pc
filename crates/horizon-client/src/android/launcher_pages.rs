@@ -7650,20 +7650,18 @@ impl Launcher {
                     "Switched back to Volt's built-in Vulkan Supporter driver.".into();
             }
             Some(Action::InstallUpdate) => {
-                // The download runs in the user's browser on purpose: Volt never
-                // asks for REQUEST_INSTALL_PACKAGES or drives PackageInstaller,
-                // so Play Protect has no "can install other apps" signal to warn
-                // about when players sideload the launcher.
+                // In the app: fetch the matched APK, then hand it to Android's
+                // installer. The player confirms once, in the system dialog.
                 if let Some(prompt) = self.update_prompt.take() {
                     crate::volt_updater::mark_update_seen(&self.home, &prompt.info.tag_name);
-                    self.catalog.status = if crate::platform::open_url(&prompt.info.download_url) {
-                        format!(
-                            "Downloading {} ({}) in your browser — open the APK when it finishes to update.",
-                            prompt.info.display_version, prompt.info.abi_label
-                        )
-                    } else {
-                        "Could not open a browser for the update download.".into()
-                    };
+                    self.catalog.status = format!(
+                        "Downloading {} ({})...",
+                        prompt.info.display_version, prompt.info.abi_label
+                    );
+                    self.update_download = Some(crate::volt_updater::spawn_download(
+                        self.home.clone(),
+                        prompt.info,
+                    ));
                 }
             }
             Some(Action::CancelUpdate) => {
@@ -8388,7 +8386,7 @@ fn draw_update_prompt(
         ui,
         targets,
         [install_x, footer_y + 4.0, btn_w, 38.0],
-        "Download",
+        "Install now",
         Action::InstallUpdate,
         BtnStyle::Primary,
         true,

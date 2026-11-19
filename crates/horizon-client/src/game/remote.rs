@@ -3654,9 +3654,17 @@ impl Game<'_> {
                             pitch,
                         );
                     }
-                } else if let Some(m) = self.mobs.iter_mut().find(|m| m.id == p.id as u32) {
-                    m.limb_speed = 1.5;
-                    m.hurt_time = 10;
+                } else if self.mobs.iter().any(|m| m.id == p.id as u32) {
+                    if let Some(m) = self.mobs.iter_mut().find(|m| m.id == p.id as u32) {
+                        m.limb_speed = 1.5;
+                        m.hurt_time = 10;
+                    }
+                    // HitReg on a server: the mob the attack was aimed at just
+                    // took damage, so stop the clock.
+                    if self.hitreg_target == Some(p.id as u32) && self.hitreg_on() {
+                        self.hitreg_target = None;
+                        self.hitreg.confirm(std::time::Instant::now());
+                    }
                 } else {
                     self.remote_dragon_hurt(p.id);
                 }
@@ -8051,6 +8059,13 @@ impl Game<'_> {
         } else if let Some((i, distance)) = self.mob_hit()
             && self.before_block(distance)
         {
+            // HitReg on a server: the clock starts here and stops when the
+            // server's damage event for this mob arrives (that is the real
+            // click-to-confirmation time, not the ping).
+            if self.hitreg_on() {
+                self.hitreg.attack(std::time::Instant::now());
+                self.hitreg_target = Some(self.mobs[i].id);
+            }
             self.send(S::Attack(play::Attack {
                 id: self.mobs[i].id as i32,
             }));
@@ -8059,6 +8074,7 @@ impl Game<'_> {
         } else if !self.entity_targeted()
             && let Some(hit) = self.pick()
         {
+            self.hitreg_target = None;
             self.remote_mining(true);
             instant = self
                 .res

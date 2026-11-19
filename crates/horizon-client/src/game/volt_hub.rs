@@ -333,7 +333,10 @@ impl Game<'_> {
                     let r = self.volt_hub_logo_rect(w, h);
                     let (ox, oy, moved) = {
                         let d = self.volt_hub.drag.as_mut().expect("owned drag");
-                        if (p.0 - d.start.0).abs() >= 4.0 || (p.1 - d.start.1).abs() >= 4.0 {
+                        // A finger resting on the badge jitters by a few
+                        // pixels; under this the press is still a hold, not a
+                        // drag, so the long-press window can open.
+                        if (p.0 - d.start.0).abs() >= 12.0 || (p.1 - d.start.1).abs() >= 12.0 {
                             d.moved = true;
                         }
                         (d.offset[0], d.offset[1], d.moved)

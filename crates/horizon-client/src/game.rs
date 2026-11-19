@@ -1971,6 +1971,9 @@ struct Game<'a> {
     motion_blur_strength: f32,
     /// HitReg: click-to-confirm timing and the hit marker on screen.
     hitreg: horizon_client::volt_feel_mods::HitReg,
+    /// The mob whose attack is waiting for the server's damage event, so a
+    /// hit on a server is timed from the press to the confirmation too.
+    hitreg_target: Option<u32>,
     /// `LocalPlayer.itemActivation`: the totem flying up to the screen.
     item_activation: horizon_client::item_activation::ItemActivation,
     weather_parameters: horizon_client::weather::ParameterCache,
@@ -14704,6 +14707,19 @@ impl Game<'_> {
     /// `Screen.extractBlurredBackground` over the panorama or the world and
     /// HUD, when `menuBackgroundBlurriness` is at least 1.
     fn menu_blur(&self) -> Option<f32> {
+        // Motion Blur first: the fast menu background is about screens, and
+        // bailing out on it here is what kept the mod from ever running on a
+        // profile that had picked "Fast dark".
+        if self.title.is_none() && self.screen == Screen::Playing && self.motion_blur_on() {
+            let strength = self.motion_blur_strength;
+            if strength > 0.02 {
+                // The radius climbs with the strength knob (1..=5) and the
+                // turn speed, so a flick is unmistakable and standing still
+                // is perfectly still.
+                let knob = f32::from(self.settings.extras.motion_blur_strength.clamp(1, 5));
+                return Some(2.0 + strength * (3.0 + knob * 2.0));
+            }
+        }
         if self.settings.extras.menu_bg_mode
             == horizon_client::volt_features::MenuBgMode::FastDark
         {
@@ -14724,18 +14740,6 @@ impl Game<'_> {
         let radius = self.settings.menu_blur as f32;
         if blurred && radius >= 1.0 {
             return Some(radius);
-        }
-        // The Motion Blur mod: a small whole-frame smear while the camera is
-        // actually turning. Nothing is blurred standing still, and the menu
-        // blur above always wins when a screen is open.
-        if self.title.is_none() && self.screen == Screen::Playing && self.motion_blur_on() {
-            let strength = self.motion_blur_strength;
-            if strength > 0.02 {
-                // Under two pixels reads as noise, not motion. The radius
-                // climbs with the strength knob, so 5/5 is unmistakable.
-                let knob = f32::from(self.settings.extras.motion_blur_strength.clamp(1, 5));
-                return Some(1.0 + strength * (2.0 + knob * 1.4));
-            }
         }
         None
     }
@@ -17315,6 +17319,7 @@ impl<'a> Game<'a> {
             motion_blur: Default::default(),
             motion_blur_strength: 0.0,
             hitreg: Default::default(),
+            hitreg_target: None,
             item_activation: Default::default(),
             weather_parameters: Default::default(),
             panorama_rotation: Default::default(),

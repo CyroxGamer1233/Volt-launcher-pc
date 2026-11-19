@@ -391,6 +391,36 @@ pub fn open_url(url: &str) -> bool {
     })
     .is_some()
 }
+/// Hands a downloaded APK to the system installer (`PackageInstaller`). The
+/// player still confirms the install in Android's own dialog; this only saves
+/// the trip through a browser and the downloads folder.
+pub fn install_apk(path: &str) -> bool {
+    with_context(|env, activity| {
+        let value = JObject::from(env.new_string(path)?);
+        let ok = env
+            .call_method(
+                activity,
+                "installApk",
+                "(Ljava/lang/String;)Z",
+                &[JValue::Object(&value)],
+            )?
+            .z()?;
+        Ok(ok)
+    })
+    .unwrap_or(false)
+}
+
+/// Brings the launcher back to the front (after signing in through the
+/// browser, the player should land on the filled-in account, not hunt for the
+/// app in Recents).
+pub fn bring_to_front() -> bool {
+    with_context(|env, activity| {
+        env.call_method(activity, "bringToFront", "()V", &[])?;
+        Ok(true)
+    })
+    .unwrap_or(false)
+}
+
 /// Public Android power/thermal status; no device identifiers or sysfs access.
 pub fn performance_power() -> serde_json::Value {
     with_context(|env, activity| {

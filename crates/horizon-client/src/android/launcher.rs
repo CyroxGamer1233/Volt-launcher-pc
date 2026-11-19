@@ -90,6 +90,9 @@ pub(super) struct Launcher {
     update_check_rx: Option<mpsc::Receiver<crate::volt_updater::UpdateInfo>>,
     pub(super) manual_check_rx: Option<mpsc::Receiver<Option<crate::volt_updater::UpdateInfo>>>,
     update_prompt: Option<crate::volt_updater::UpdatePrompt>,
+    /// The in-app update download, while the prompt's Update button is
+    /// fetching the APK for the installer.
+    update_download: Option<mpsc::Receiver<crate::volt_updater::DownloadUpdate>>,
     pub(super) controls_studio: controls_studio::ControlsStudio,
     pub(super) pending_play: bool,
     pub(super) pending_activate: Option<(f64, f64, Option<usize>)>,
@@ -230,6 +233,7 @@ impl Launcher {
             update_check_rx,
             manual_check_rx: None,
             update_prompt: None,
+            update_download: None,
             controls_studio: Default::default(),
             pending_play: false,
             pending_activate: None,
@@ -1092,6 +1096,50 @@ impl ApplicationHandler for Launcher {
             if let Some(acc) = self.volt_accounts.active() {
                 self.catalog.config.name = acc.name.clone();
                 let _ = self.catalog.config.save(&self.home);
+            }
+        }
+        // The update downloader: progress into the status line, then the
+        // finished APK straight to Android's installer.
+        if let Some(rx) = self.update_download.take() {
+            let mut still_running = true;
+            while let Ok(message) = rx.try_recv() {
+                match message {
+                    crate::volt_updater::DownloadUpdate::Progress(done, total) => {
+                        self.catalog.status = if total > 0 {
+                            format!(
+                                "Downloading the update: {:.0}% ({:.0} of {:.0} MB)...",
+                                (done as f64 / total as f64) * 100.0,
+                                done as f64 / (1024.0 * 1024.0),
+                                total as f64 / (1024.0 * 1024.0)
+                            )
+                        } else {
+                            format!(
+                                "Downloading the update: {:.0} MB...",
+                                done as f64 / (1024.0 * 1024.0)
+                            )
+                        };
+                        self.needs_redraw = true;
+                    }
+                    crate::volt_updater::DownloadUpdate::Ready(path) => {
+                        still_running = false;
+                        let shown = path.to_string_lossy().to_string();
+                        self.catalog.status = if crate::platform::install_apk(&shown) {
+                            "Update downloaded - confirm the install in Android's dialog."
+                                .into()
+                        } else {
+                            format!("Update downloaded to {shown}, but the installer did not start.")
+                        };
+                        self.needs_redraw = true;
+                    }
+                    crate::volt_updater::DownloadUpdate::Failed(why) => {
+                        still_running = false;
+                        self.catalog.status = why;
+                        self.needs_redraw = true;
+                    }
+                }
+            }
+            if still_running {
+                self.update_download = Some(rx);
             }
         }
         if let Some(result) = self.session_worker.as_ref().and_then(|w| w.try_recv().ok()) {

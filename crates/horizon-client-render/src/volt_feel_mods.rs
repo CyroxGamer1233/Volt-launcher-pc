@@ -7,7 +7,7 @@
 use std::time::{Duration, Instant};
 
 /// How long a hit-marker stays on screen.
-pub const HIT_MARKER: Duration = Duration::from_millis(180);
+pub const HIT_MARKER: Duration = Duration::from_millis(320);
 /// Hits slower than this register as late; the readout turns amber.
 pub const HIT_SLOW_MS: f32 = 120.0;
 /// Hits this late are shown in coral.
@@ -59,9 +59,9 @@ impl MotionBlur {
         if !strength.is_finite() || strength <= 0.0 || self.velocity <= 0.0 {
             return 0.0;
         }
-        // A fast flick is roughly 12 degrees in a frame. Dividing by that
-        // makes an ordinary look barely blur and a whip saturate.
-        let scaled = self.velocity / 12.0 * strength;
+        // A flick is roughly 6 degrees of turn in a frame on a phone. Dividing
+        // by that makes an ordinary look barely blur and a whip saturate.
+        let scaled = self.velocity / 6.0 * strength;
         scaled.clamp(0.0, 1.0)
     }
 

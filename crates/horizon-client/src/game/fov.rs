@@ -242,9 +242,9 @@ impl Game<'_> {
         } else {
             GREEN
         };
-        // Four corner strokes: four pixels out, four long, clear of the
-        // crosshair itself so both stay readable.
-        let (inner, len, thick) = (5.0_f32, 4.0_f32, 1.0_f32);
+        // Four corner strokes: clear of the crosshair itself so both stay
+        // readable, and wide enough to notice on a phone screen.
+        let (inner, len, thick) = (7.0_f32, 7.0_f32, 2.0_f32);
         for (dx, dy) in [(-1.0_f32, -1.0_f32), (1.0, -1.0), (-1.0, 1.0), (1.0, 1.0)] {
             let x = cx + dx * inner;
             let y = cy + dy * inner;
@@ -278,7 +278,7 @@ impl Game<'_> {
             &self.gui.atlas,
             &label,
             cx - tw / 2.0,
-            cy + 14.0,
+            cy + 18.0,
             colour(tint),
             true,
         );
