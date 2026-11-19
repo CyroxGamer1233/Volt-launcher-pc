@@ -5217,6 +5217,27 @@ impl Renderer {
             self.acquire_validation_failures = 0;
         }
         let size = [self.config.width, self.config.height];
+        // Android: the swapchain can be wider or taller than the size the
+        // window reports (a display inset, a curved edge, a cutout). When one
+        // axis matches and the other does not, the swapchain is the real
+        // drawable — adopt it, or the world fills the screen while the HUD and
+        // the touch layout stop at the reported inner size and leave a strip.
+        // Skipping one frame is enough: the game rebuilds the HUD at the new
+        // size on the next one. A render-scale change moves BOTH axes, so it
+        // keeps its smaller frame and its upscale.
+        #[cfg(target_os = "android")]
+        if let Some(f) = &surface_frame {
+            let physical = [f.texture.width(), f.texture.height()];
+            let inset = physical != size
+                && physical[0] > 0
+                && physical[1] > 0
+                && (physical[0] == size[0] || physical[1] == size[1]);
+            if inset {
+                self.config.width = physical[0];
+                self.config.height = physical[1];
+                return Ok(false);
+            }
+        }
         #[cfg(target_os = "android")]
         let scaled_presentation = surface_frame.as_ref().is_some_and(|f| {
             let physical = [f.texture.width(), f.texture.height()];

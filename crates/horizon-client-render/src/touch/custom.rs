@@ -166,7 +166,12 @@ impl CustomButton {
                 self.background_image = None;
             }
         }
-        self.extra_keys.retain(|k| Self::valid_token(k) && k != "key.keyboard.unknown");
+        // The mapping slots are positional (slot 2 is `extra_keys[0]`, slot 3
+        // is `extra_keys[1]`, ...). An empty slot keeps its "unknown"
+        // placeholder: dropping it would slide every later slot down one, so
+        // filling slot 4 first and slot 2 second appeared to overwrite slot 4.
+        // "unknown" is skipped when the button fires, so it binds nothing.
+        self.extra_keys.retain(|k| Self::valid_token(k));
         self.extra_keys.truncate(8);
         if let Some(label) = &mut self.label {
             if label.len() > 48 {
@@ -859,6 +864,75 @@ mod tests {
         t.clear();
         assert_eq!(t.key_events(), [("key.keyboard.z".into(), false)]);
         assert_eq!(t.settings.custom_buttons[0].layouts[0].size, stored);
+    }
+
+    /// A control with four different mappings presses all four together,
+    /// which is how a Pojav layout shares one button between several keys.
+    #[test]
+    fn every_mapping_slot_of_a_button_fires() {
+        let mut t = TouchControls::default();
+        t.viewport(2400, 1080);
+        let mut btn = CustomButton::new("key.keyboard.escape".into(), 0);
+        btn.extra_keys = vec![
+            "key.keyboard.t".into(),
+            "key.keyboard.f3".into(),
+            "key.keyboard.g".into(),
+        ];
+        btn.layouts = [Placement {
+            center: [0.5, 0.5],
+            size: 0.12,
+            opacity: 0.8,
+        }; 3];
+        t.settings.custom_buttons.push(btn);
+        let center = t.custom_placement(0).center;
+        t.update(7, center, true, false);
+        let mut down: Vec<String> = t
+            .key_events()
+            .into_iter()
+            .filter(|(_, pressed)| *pressed)
+            .map(|(token, _)| token)
+            .collect();
+        down.sort();
+        assert_eq!(
+            down,
+            [
+                "key.keyboard.escape",
+                "key.keyboard.f3",
+                "key.keyboard.g",
+                "key.keyboard.t"
+            ],
+            "all four mappings must press"
+        );
+        t.update(7, center, false, true);
+        let mut up: Vec<String> = t
+            .key_events()
+            .into_iter()
+            .filter(|(_, pressed)| !*pressed)
+            .map(|(token, _)| token)
+            .collect();
+        up.sort();
+        assert_eq!(up.len(), 4, "and all four must release: {up:?}");
+    }
+
+    /// Slots are positional: binding slot 4 then slot 2 must not shuffle them.
+    #[test]
+    fn mapping_slots_keep_their_positions() {
+        let mut btn = CustomButton::new("key.keyboard.escape".into(), 0);
+        btn.extra_keys = vec![
+            "key.keyboard.unknown".into(),
+            "key.keyboard.unknown".into(),
+            "key.keyboard.g".into(),
+        ];
+        btn.sanitize();
+        assert_eq!(
+            btn.extra_keys,
+            [
+                "key.keyboard.unknown",
+                "key.keyboard.unknown",
+                "key.keyboard.g"
+            ],
+            "an empty slot keeps its place"
+        );
     }
 
     #[test]
