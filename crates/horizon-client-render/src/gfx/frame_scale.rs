@@ -52,15 +52,10 @@ impl FrameScale {
                 format: Some(self.format),
                 ..Default::default()
             });
-            self.post.finish_in_rect(
-                encoder,
-                &view,
-                group,
-                Some(winit::platform::android::native_content_rect([
-                    output.width(),
-                    output.height(),
-                ])),
-            );
+            // Cover the whole output surface. Blitting into the safe content
+            // rect instead left a strip down the edge of the screen that the
+            // game kept drawing into while every control stopped short of it.
+            self.post.finish_in_rect(encoder, &view, group, None);
         }
     }
 }
