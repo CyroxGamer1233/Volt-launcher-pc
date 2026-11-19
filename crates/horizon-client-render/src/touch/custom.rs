@@ -173,6 +173,7 @@ impl CustomButton {
         // "unknown" is skipped when the button fires, so it binds nothing.
         self.extra_keys.retain(|k| Self::valid_token(k));
         self.extra_keys.truncate(8);
+        let mut drop_caption = false;
         if let Some(label) = &mut self.label {
             if label.len() > 48 {
                 let mut end = 48;
@@ -181,6 +182,13 @@ impl CustomButton {
                 }
                 label.truncate(end);
             }
+            // Another launcher's layout names buttons with a description
+            // ("Sprinting (Key)", "Sneak: toggle"), which reads as stray text
+            // over the world. Those fall back to the key's own short caption.
+            drop_caption = imported && !Self::caption_is_label(label);
+        }
+        if drop_caption {
+            self.label = None;
         }
         for p in &mut self.layouts {
             if imported {
@@ -189,6 +197,17 @@ impl CustomButton {
                 p.sanitize();
             }
         }
+    }
+
+    /// Whether an imported caption names the key rather than describing it.
+    /// A caption with brackets, a colon or a whole sentence is a description
+    /// from another launcher's editor, not a label to paint on the button.
+    pub fn caption_is_label(text: &str) -> bool {
+        let text = text.trim();
+        !text.is_empty()
+            && text.chars().count() <= 20
+            && !text.contains(['(', ')', '[', ']', '{', '}', ':'])
+            && text.split_whitespace().count() <= 3
     }
 
     pub fn label(&self) -> String {
@@ -623,6 +642,10 @@ impl TouchControls {
             if opacity <= 0.0 {
                 continue;
             }
+            // Does the button paint anything at all? A clear fill with a clear
+            // border leaves only its caption on screen, which reads as loose
+            // text over the world, so such a caption is not painted.
+            let mut paints = true;
             let text_color = if button.bg_color.is_some()
                 || button.stroke_color.is_some()
                 || button.corner_radius.is_some()
@@ -659,6 +682,9 @@ impl TouchControls {
                     .stroke_width
                     .unwrap_or(1.0)
                     .clamp(0.5, (rect[2].min(rect[3]) * 0.3).max(0.5));
+                paints = button.background_image.is_some()
+                    || fill_alpha > 8
+                    || ((stroke >> 24) & 0xFF) > 8;
                 // With a background image the game pre-draws the picture under
                 // this overlay pass; the flat fill would cover it.
                 let fill = if button.background_image.is_some() {
@@ -707,7 +733,14 @@ impl TouchControls {
                 }
                 rgba(25, 25, 25, (opacity * 255.0) as u8)
             };
-            let label = button.label();
+            let label = if !paints {
+                String::new()
+            } else {
+                button.label()
+            };
+            if label.is_empty() {
+                continue;
+            }
             let width = HudBatch::text_width(a, &label);
             let start = b.vertices.len();
             let shadow = button.bg_color.is_some()
@@ -1044,5 +1077,26 @@ mod tests {
         assert_eq!(t.custom_at([0.2, 0.5]), Some(5));
         t.inventory_mode = true;
         assert_eq!(t.custom_at([0.2, 0.5]), None);
+    }
+
+    #[test]
+    fn imported_descriptions_are_not_painted_as_captions() {
+        let mut described = CustomButton::new("key.keyboard.left.control".into(), 0);
+        described.label = Some("Sprinting (Key)".into());
+        described.sanitize(true);
+        assert_eq!(described.label, None);
+        assert!(!described.label().contains("Sprinting"));
+        // Short names and the presets' own captions are still painted.
+        for kept in ["Sneak", "Use / Place", "Hotbar Slot 1"] {
+            let mut named = CustomButton::new("key.keyboard.unknown".into(), 0);
+            named.label = Some(kept.into());
+            named.sanitize(true);
+            assert_eq!(named.label.as_deref(), Some(kept));
+        }
+        // The launcher's own button labels are never second-guessed.
+        let mut own = CustomButton::new("key.keyboard.unknown".into(), 0);
+        own.label = Some("Sneak: toggle".into());
+        own.sanitize(false);
+        assert_eq!(own.label.as_deref(), Some("Sneak: toggle"));
     }
 }

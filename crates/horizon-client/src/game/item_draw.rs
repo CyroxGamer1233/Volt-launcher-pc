@@ -288,14 +288,50 @@ impl Game<'_> {
         seed: i32,
     ) -> ItemRenderState {
         let level = self.item_level();
-        self.pack.item_renderer.resolve(
+        let mut state = self.pack.item_renderer.resolve(
             &item_render::stack_view(stack),
             display,
             owner,
             Some(&level),
             seed,
             &self.item_env(),
-        )
+        );
+        self.ensure_foil(&mut state, stack);
+        state
+    }
+    /// `ItemStack.hasFoil` from the stack itself, so an enchanted stack glints
+    /// even when the item model pipeline found no `minecraft:enchantments`
+    /// component to read (an item the game stores enchantments for directly).
+    pub(super) fn stack_has_foil(&self, stack: &ItemStack) -> bool {
+        let glint = self
+            .res
+            .items()
+            .enchantments
+            .props
+            .get(&*stack.item)
+            .is_some_and(|p| p.glint);
+        stack.has_foil(glint)
+    }
+    /// Add the glint to every resolved layer of an enchanted stack that came
+    /// back without one: the glint is `hasFoil`, not a property of the model.
+    pub(super) fn ensure_foil(&self, state: &mut ItemRenderState, stack: &ItemStack) {
+        use horizon_assets::item_model::FoilType;
+        if state
+            .layers
+            .iter()
+            .any(|l| l.foil != FoilType::None)
+            || !self.stack_has_foil(stack)
+        {
+            return;
+        }
+        // Every layer takes it: a quad layer draws the glint pass, a special
+        // renderer (a trident, a shield) reads `has_foil` and adds its own.
+        for layer in &mut state.layers {
+            layer.foil = FoilType::Standard;
+        }
+        if !state.layers.is_empty() {
+            state.animated = true;
+        }
     }
     /// `GuiGraphics.renderItem(player, level, stack, x, y, 0)`.
     pub(super) fn draw_item_model(&self, batch: &mut HudBatch, stack: &ItemStack, x: f32, y: f32) {
