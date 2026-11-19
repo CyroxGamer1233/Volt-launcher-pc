@@ -281,6 +281,11 @@ impl Game<'_> {
         }
     }
 
+    /// Whether the badge's own full-screen page (size, opacity, off) is up.
+    pub(super) fn volt_badge_page_open(&self) -> bool {
+        self.volt_hub.badge_menu
+    }
+
     /// The floating logo's rectangle in GUI coordinates, clamped on screen.
     pub(super) fn volt_hub_logo_rect(&self, w: f32, h: f32) -> [f32; 4] {
         // The side the user picked in the badge's long-press menu.

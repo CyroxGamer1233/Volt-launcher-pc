@@ -619,7 +619,7 @@ impl Game<'_> {
         }
         // The open hub window also rides over menus: it takes the tap
         // (a tap outside its panel closes it) before the screen below.
-        if (self.volt_hub.open || self.volt_hub.badge_menu)
+        if (self.volt_hub.open || self.volt_badge_page_open())
             && self.pad_in_menu()
             && t.phase == TouchPhase::Started
             && self.try_click_volt_hud((p[0], p[1]), true)
