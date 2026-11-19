@@ -411,6 +411,9 @@ impl TouchUi {
     /// four buttons; the pause menu calls this itself so the corner is there
     /// even when the rest of the overlay is hidden.
     pub fn draw_menu_corner(&self, b: &mut HudBatch, a: &HudAtlas) {
+        if !cfg!(target_os = "android") {
+            return;
+        }
         b.fill(
             a,
             b.width - 112.0,

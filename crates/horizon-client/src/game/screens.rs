@@ -257,7 +257,8 @@ impl Game<'_> {
         }
         // Touch players need Mouse/Back and the LMB/RMB pair here too; the
         // pause menu paints its own opaque panel, so draw the corner last.
-        #[cfg(target_os = "android")]
+        // (The method itself is a no-op off Android; a cfg attribute here
+        // would break the mod weaver, which injects into this function.)
         self.pad.touch_ui.draw_menu_corner(batch, atlas);
     }
     pub(super) fn pause_click(&mut self) -> Result<()> {
