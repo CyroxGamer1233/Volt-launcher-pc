@@ -3387,9 +3387,12 @@ mod tests {
     #[test]
     fn mod_catalog_round_trips_and_syncs_with_engine() {
         let mut s = Settings::default();
-        assert!(s.extras.mod_catalog.is_on(VoltModId::Sodium));
-        assert!(s.extras.mod_catalog.is_on(VoltModId::ModMenu));
+        // A fresh install has every mod off, performance ones included.
+        assert!(!s.extras.mod_catalog.is_on(VoltModId::Sodium));
+        assert!(!s.extras.mod_catalog.is_on(VoltModId::ModMenu));
         assert!(!s.extras.mod_catalog.is_on(VoltModId::Fullbright));
+        apply_mod_to_engine(VoltModId::Sodium, true, &mut s.extras, &mut s.horizon);
+        assert!(s.extras.mod_catalog.is_on(VoltModId::Sodium));
 
         apply_mod_to_engine(VoltModId::Fullbright, true, &mut s.extras, &mut s.horizon);
         apply_mod_to_engine(
