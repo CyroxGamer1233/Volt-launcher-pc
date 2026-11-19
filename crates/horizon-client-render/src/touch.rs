@@ -1366,10 +1366,15 @@ mod tests {
         let p = t.placement(Control::Shield).center;
         t.update(2, p, true, false);
         assert!(t.shield_held());
+        // The raise follows the thumb: sliding off the button lowers it, and
+        // sliding back raises it again, both without lifting.
         t.update(2, [0.5, 0.4], false, false);
+        assert!(!t.shield_held());
+        assert_eq!(t.poll_state().triggers[0], 0.0);
+        t.update(2, p, false, false);
         assert!(t.shield_held());
         assert!(t.poll_state().triggers[0] > 0.0);
-        t.update(2, [0.5, 0.4], false, true);
+        t.update(2, p, false, true);
         assert!(!t.shield_held());
         assert_eq!(t.poll_state().triggers[0], 0.0);
     }
