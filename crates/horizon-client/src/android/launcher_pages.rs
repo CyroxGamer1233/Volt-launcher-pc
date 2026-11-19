@@ -264,6 +264,8 @@ pub(crate) enum Action {
     ChooseAspect(crate::display::Aspect),
     DisplayHz,
     ChooseDisplayHz(u16),
+    /// Ask the window for the display's highest refresh mode.
+    MaxRefresh,
     PerformanceHints,
     GpuProfile,
     ImportControl,
@@ -349,6 +351,7 @@ fn toggle_key(action: Action) -> u32 {
         Action::Immersive => 1,
         Action::Cutout => 2,
         Action::PerformanceHints => 3,
+        Action::MaxRefresh => 8,
         Action::GpuProfile => 4,
         Action::RecordPerformance => 5,
         Action::ToggleServerSkinSync => 6,
@@ -4325,7 +4328,7 @@ impl DrawCtx<'_> {
             _ => "Built-in Supporter".to_owned(),
         };
 
-        let left_items: [(&str, String, Action, Option<bool>, bool); 12] = [
+        let left_items: [(&str, String, Action, Option<bool>, bool); 14] = [
             ("Theme", if c.launcher_liquid { "Liquid Glass" } else { "Classic" }.to_owned(), Action::ToggleLiquid, None, false),
             ("Appearance", if c.launcher_dark { "Dark" } else { "Light" }.to_owned(), Action::ToggleAppearance, None, false),
             ("Accent color", format!("#{:06X}", c.launcher_accent), Action::CycleAccent, None, false),
@@ -4384,6 +4387,20 @@ impl DrawCtx<'_> {
                 Action::DisplayHz,
                 None,
                 true,
+            ),
+            (
+                "Request max refresh rate",
+                String::new(),
+                Action::MaxRefresh,
+                Some(c.device.max_refresh),
+                false,
+            ),
+            (
+                "::caption",
+                String::new(),
+                Action::MaxRefresh,
+                None,
+                false,
             ),
             (
                 "Performance hints",
@@ -4670,6 +4687,30 @@ impl DrawCtx<'_> {
                     let y = list_top + i as f32 * row_h - self.catalog.scroll;
                     let ctrl_w = (col_w * 0.50).clamp(132.0, 236.0);
                     let ctrl_rect = [base_x + col_w - ctrl_w - 16.0, y + 5.0, ctrl_w, 34.0];
+                    // "::" rows are the live caption under a switch: text only,
+                    // no control and no tap target of their own.
+                    if label.starts_with("::") {
+                        if y >= list_top - 4.0 && y + row_h - 4.0 <= list_bottom {
+                            let caption = crate::device_preferences::Settings::refresh_caption(
+                                crate::platform::display_refresh_cached(),
+                            );
+                            let fit = ui.fit_text(
+                                Face::LauncherRegular,
+                                11.5,
+                                &caption,
+                                col_w - 40.0,
+                            );
+                            ui.text(
+                                Face::LauncherRegular,
+                                11.5,
+                                base_x + 20.0,
+                                y + 12.0,
+                                theme::MUTED(),
+                                &fit,
+                            );
+                        }
+                        continue;
+                    }
                     self.list_targets.push((ctrl_rect, *act));
                     if y < list_top - 4.0 || y + row_h - 4.0 > list_bottom {
                         continue;
@@ -4876,6 +4917,16 @@ impl DrawCtx<'_> {
             for (i, (label, val, act, sw, dropdown)) in all_items.iter().enumerate() {
                 let y = top + import_block_h + i as f32 * row_h - self.catalog.scroll;
                 let ctrl_rect = [cx, y + 24.0, cw, 38.0];
+                if label.starts_with("::") {
+                    if y >= top && y + row_h - 4.0 <= bottom {
+                        let caption = crate::device_preferences::Settings::refresh_caption(
+                            crate::platform::display_refresh_cached(),
+                        );
+                        let fit = ui.fit_text(Face::LauncherRegular, 11.5, &caption, cw - 4.0);
+                        ui.text(Face::LauncherRegular, 11.5, cx + 2.0, y + 10.0, theme::MUTED(), &fit);
+                    }
+                    continue;
+                }
                 self.list_targets.push((ctrl_rect, *act));
                 if y < top || y + row_h - 4.0 > bottom {
                     continue;
@@ -6879,6 +6930,24 @@ impl Launcher {
                 self.chooser = None;
             }
             Some(Action::DisplayHz) => self.open_chooser(chooser::Kind::DisplayHz),
+            Some(Action::MaxRefresh) => {
+                let device = &mut self.catalog.config.device;
+                device.max_refresh ^= true;
+                if device.max_refresh {
+                    // The switch is the request, so an explicit rate that is
+                    // lower than the panel must not keep it there.
+                    device.display_hz = 0;
+                }
+                let on = device.max_refresh;
+                self.catalog.status = if on {
+                    "Requesting the screen's highest refresh rate. Some games still pace frames to the display's mode."
+                } else {
+                    "Back to the system's default refresh rate."
+                }
+                .into();
+                self.catalog.config.save(&self.home)?;
+                crate::device_runtime::configure(self.catalog.config.device);
+            }
             Some(Action::ChooseDisplayHz(hz)) => {
                 self.catalog.config.device.display_hz = hz;
                 self.catalog.config.device.sanitize();

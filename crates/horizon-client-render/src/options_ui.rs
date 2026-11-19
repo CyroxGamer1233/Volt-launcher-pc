@@ -59,7 +59,6 @@ const MODEL_PART_KEYS: [&str; 7] = [
 /// `AccessibilityOptionsScreen.options`, with the Controls link inserted separately.
 pub(crate) const ACCESSIBILITY_OPTIONS: &[Opt] = &[
     Opt::Narrator,
-    Opt::ShowSubtitles,
     #[cfg(target_os = "android")]
     Opt::TouchHorizontalMargin,
     #[cfg(target_os = "android")]
@@ -3013,7 +3012,9 @@ impl OptionsUi {
                 let mut rows = vec![Row::Big(Opt::Volume(0))];
                 let others: Vec<Opt> = (1..SOUND_SOURCES.len()).map(Opt::Volume).collect();
                 rows.extend(pairs(&others));
-                rows.extend(pairs(&[Opt::ShowSubtitles, Opt::DirectionalAudio]));
+                // Sound captions ("Show Subtitles") are gone from Volt; the
+                // option is no longer offered on any page.
+                rows.extend(pairs(&[Opt::DirectionalAudio]));
                 rows.extend(pairs(&[Opt::MusicFrequency, Opt::MusicToast]));
                 rows.push(Row::Big(Opt::SoundDevice));
                 rows

@@ -109,6 +109,14 @@ pub fn hotbar_slot(width: f32, height: f32, point: [f32; 2]) -> Option<usize> {
     (point[1] >= height - 22.0 && point[1] < height && (0.0..180.0).contains(&x))
         .then(|| (x / 20.0) as usize)
 }
+
+/// The hotbar slot under a finger sliding along the bar: the y band is
+/// ignored so a wandering thumb keeps changing slots instead of dropping the
+/// gesture.
+pub fn hotbar_slot_at_x(width: f32, x: f32) -> Option<usize> {
+    let x = x - (width / 2.0 - 90.0);
+    (0.0..180.0).contains(&x).then(|| (x / 20.0) as usize)
+}
 #[derive(Clone, Copy)]
 enum Role {
     Move([f32; 2]),
@@ -1959,6 +1967,12 @@ mod tests {
             );
         }
         assert_eq!(hotbar_slot(427.0, 240.0, [320.0, 230.0]), None);
+        // Sliding across the bar keeps resolving slots at the same x, even
+        // when the finger drifts up out of the bar's own band.
+        for i in 0..9 {
+            assert_eq!(hotbar_slot_at_x(427.0, 133.5 + i as f32 * 20.0), Some(i));
+        }
+        assert_eq!(hotbar_slot_at_x(427.0, 320.0), None);
     }
     #[test]
     fn old_profiles_keep_custom_layouts_and_new_preferences_have_safe_defaults() {

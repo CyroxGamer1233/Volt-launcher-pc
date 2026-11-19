@@ -5708,7 +5708,6 @@ impl Game<'_> {
         self.sleep_timer = super::tick_sleep_timer(self.sleep_timer, self.sleeping.is_some());
         // Gui.tick: the titles, the action bar and the held item's name.
         self.tick_hud();
-        self.tick_subtitles();
         self.tick_client_load();
         let entity_collisions = self.player_entity_collisions();
         let pushed = self.remote_pushes();

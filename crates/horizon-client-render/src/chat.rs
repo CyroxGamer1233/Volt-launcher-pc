@@ -1161,22 +1161,24 @@ impl ChatScreen {
                     c.dispatcher
                         .client_suggestions_asking(parse, cursor_b, c.registries);
                 if ask {
-                    // ClientSuggestionProvider.customSuggestion: the
-                    // suggestions are done when the server answers.
+                    // ClientSuggestionProvider.customSuggestion: the server's
+                    // completions are merged in when its reply arrives.
                     let id = SUGGESTION_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
                     let truncated = command[..cursor_b].to_owned();
                     self.request = Some((id, truncated.clone()));
                     self.awaiting = Some(Awaiting {
                         id,
                         truncated,
-                        local: list,
+                        local: list.clone(),
                     });
-                    self.pending = None;
                 } else {
                     self.awaiting = None;
-                    self.pending = Some((range.0, list));
-                    self.update_usage_info(m, c);
                 }
+                // The client's own completions show immediately. Waiting for
+                // the reply left the list blank whenever it never came: single
+                // player sends no request at all, and some servers ignore it.
+                self.pending = Some((range.0, list));
+                self.update_usage_info(m, c);
             }
         } else if !command.chars().all(char::is_whitespace) {
             let partial = &command[..cursor_b];
@@ -1355,13 +1357,19 @@ impl ChatScreen {
             });
         first.extend(rest);
         // SuggestionsList: beside a bordered box, or over an unbordered one.
-        let n = first.len().min(self.layout.line_limit) as i32;
+        // A zero line limit or a list taller than the screen used to paint
+        // nothing on small displays, so the row count always keeps one line
+        // and the top is pulled back onto the screen.
         let bordered = i32::from(self.input.bordered);
+        let mut n = first.len().min(self.layout.line_limit.max(1)) as i32;
         let top = if self.layout.anchor_to_bottom {
-            y - 3 - n * 12
+            (y - 3 - n * 12).max(0)
         } else {
-            y - bordered
+            (y - bordered).max(0)
         };
+        let room = ((self.height - top) / 12).max(1);
+        n = n.min(room).max(1);
+        let width = width.max(8);
         let mut l = SuggestionList {
             rect: [x - (1 - bordered), top, width + 1, n * 12],
             original: value,
@@ -1663,7 +1671,11 @@ impl ChatScreen {
         l: &mut SuggestionList,
         mouse: (i32, i32),
     ) {
-        let limit = l.list.len().min(self.layout.line_limit);
+        let limit = l
+            .list
+            .len()
+            .saturating_sub(l.offset)
+            .min(self.layout.line_limit.max(1));
         let [rx, ry, rw, rh] = l.rect;
         let has_prev = l.offset > 0;
         let has_next = l.list.len() > l.offset + limit;

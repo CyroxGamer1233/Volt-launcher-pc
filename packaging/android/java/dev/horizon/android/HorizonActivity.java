@@ -135,6 +135,31 @@ public final class HorizonActivity extends android.app.NativeActivity {
         return sb.toString();
     }
 
+    /**
+     * "max:current" refresh rates in Hz, from the display's supported modes.
+     * Empty when the platform cannot report them.
+     */
+    @SuppressWarnings("deprecation")
+    public String displayRefresh() {
+        try {
+            android.view.Display display = getWindowManager().getDefaultDisplay();
+            if (display == null) return "";
+            float current = display.getRefreshRate();
+            float max = current;
+            if (android.os.Build.VERSION.SDK_INT >= 23) {
+                android.view.Display.Mode[] modes = display.getSupportedModes();
+                if (modes != null) {
+                    for (android.view.Display.Mode mode : modes) {
+                        if (mode != null && mode.getRefreshRate() > max) max = mode.getRefreshRate();
+                    }
+                }
+            }
+            return Float.toString(max) + ":" + Float.toString(current);
+        } catch (Throwable ignored) {
+            return "";
+        }
+    }
+
     public String appVersionName() {
         try {
             android.content.pm.PackageInfo info =

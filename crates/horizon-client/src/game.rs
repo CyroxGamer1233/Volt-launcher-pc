@@ -278,7 +278,6 @@ mod storage;
 mod structure_blocks;
 mod structure_edit;
 mod structures;
-mod subtitle_hud;
 mod sulfur_cubes;
 mod test_block_edit;
 mod test_blocks;
@@ -2645,7 +2644,6 @@ struct Game<'a> {
     border_state: horizon_client::border_render::BorderRenderState,
     /// `Hud.tabList`: the player list's header, footer and heart states.
     tab_list: horizon_client::tab_list::TabList,
-    subtitles: subtitle_hud::SubtitleState,
     adv: advancements::AdvState,
     restore_player_state: bool,
     stats_ui: stats_screen::StatsUi,
@@ -7865,7 +7863,6 @@ impl Game<'_> {
             horizon_client::hud::inset_overlay(&mut batch, margins, |b| {
                 self.draw_titles(b, bar_height);
                 self.draw_scoreboard(b);
-                self.draw_subtitles(b);
             });
         }
         let atlas = &self.gui.atlas;
@@ -10831,7 +10828,6 @@ impl Game<'_> {
         self.load_bossbars();
         self.tick_functions();
         self.tick_worldborder();
-        self.tick_subtitles();
         self.spawn_phantoms();
         self.tick_advancements();
         self.tick_player_model();
@@ -15654,6 +15650,24 @@ impl Game<'_> {
                 let Some(size) = self.window.as_ref().map(|w| w.inner_size()) else {
                     return;
                 };
+                // A finger that started on the hotbar keeps re-picking the slot
+                // it is over while it slides, so attributes can be swapped by
+                // dragging along the bar instead of tapping each slot.
+                if self.pad.touch_ui.hotbar_drag == Some(touch.id) {
+                    if matches!(touch.phase, TouchPhase::Ended | TouchPhase::Cancelled) {
+                        self.pad.touch_ui.hotbar_drag = None;
+                        self.pad.in_use = false;
+                        return;
+                    }
+                    let batch = HudBatch::new([size.width, size.height]);
+                    if let Some(slot) = horizon_client::touch::hotbar_slot_at_x(
+                        batch.width,
+                        touch.location.x as f32 / batch.scale,
+                    ) {
+                        self.selected = slot;
+                    }
+                    return;
+                }
                 if touch.phase == TouchPhase::Started {
                     let batch = HudBatch::new([size.width, size.height]);
                     let point = [
@@ -15668,6 +15682,7 @@ impl Game<'_> {
                         ])
                     {
                         self.selected = slot;
+                        self.pad.touch_ui.hotbar_drag = Some(touch.id);
                         self.pad.touch.ignore(touch.id);
                         return;
                     }
@@ -17769,7 +17784,6 @@ impl<'a> Game<'a> {
             border_renderer: Default::default(),
             border_state: Default::default(),
             tab_list: Default::default(),
-            subtitles: Default::default(),
             adv: Default::default(),
             restore_player_state: true,
             stats_ui: Default::default(),

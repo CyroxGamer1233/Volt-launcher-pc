@@ -106,6 +106,10 @@ pub(super) struct Hub {
     /// Long-pressing the badge opens its own small settings window (size,
     /// opacity, off) instead of the hub.
     badge_menu: bool,
+    /// "Turn off" from the badge menu hides the logo for this session only.
+    /// It is deliberately not saved: a restart brings the badge back, so
+    /// turning it off can never lose it for good.
+    hidden: bool,
     tab: HubTab,
     /// Click targets rebuilt every drawn frame, in GUI coordinates.
     targets: Vec<([f32; 4], Act)>,
@@ -168,6 +172,18 @@ const DIM: u32 = 0xFF9A8F96;
 const SCRIM: u32 = 0x8C000000;
 
 impl Game<'_> {
+    /// True when the logo must not draw or take touches: hidden by the
+    /// session switch, or by the saved Volt Settings switch. The saved
+    /// switch still shows the logo on menus, so it stays recoverable.
+    fn volt_badge_gone(&self, menu_open: bool) -> bool {
+        // "Turn off" in the badge menu hides it until the next launch.
+        if self.volt_hub.hidden {
+            return true;
+        }
+        // The saved switch (Volt Settings, V badge) hides it in world but
+        // leaves it on menus, so it can never be lost for good.
+        self.settings.extras.volt_badge_hidden && !menu_open
+    }
     /// F10 toggles the hub while playing.
     pub(super) fn volt_hub_key(&mut self, key: KeyCode) -> bool {
         if key == KeyCode::F10 && self.screen == Screen::Playing && self.title.is_none() {
@@ -320,7 +336,7 @@ impl Game<'_> {
         // The logo is drawn inside the same safe-area inset as the hub.
         let p = self.volt_hub_inset_cursor(p);
         // A badge the user turned off is not there: it takes no touches.
-        if self.settings.extras.volt_badge_hidden && !self.volt_hub.badge_menu {
+        if !self.volt_hub.badge_menu && self.volt_badge_gone(self.pad_in_menu()) {
             self.volt_hub.drag = None;
             return false;
         }
@@ -500,9 +516,11 @@ impl Game<'_> {
                 self.settings.save(&Self::options_path());
             }
             Act::BadgeOff => {
-                self.settings.extras.volt_badge_hidden = true;
+                // Session only. The permanent switch lives in Volt Settings
+                // (V badge), and even that one leaves the logo reachable
+                // from menus, so the badge can always be restored.
+                self.volt_hub.hidden = true;
                 self.volt_hub.badge_menu = false;
-                self.settings.save(&Self::options_path());
             }
             Act::Tab(tab) => {
                 self.volt_hub.tab = tab;
@@ -844,7 +862,7 @@ impl Game<'_> {
         let kd = scale / ui.density;
 
         // The badge's own settings, from its long-press menu.
-        let badge_hidden = self.settings.extras.volt_badge_hidden;
+        let badge_hidden = self.volt_badge_gone(self.screen != Screen::Playing);
         let badge_alpha =
             (f32::from(self.settings.extras.volt_badge_opacity) / 100.0).clamp(0.1, 1.0);
         if !open && !self.volt_hub.badge_menu && !badge_hidden {

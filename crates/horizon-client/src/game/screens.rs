@@ -255,6 +255,10 @@ impl Game<'_> {
                 .collect();
             ui::tooltip(batch, atlas, &lines, self.cursor);
         }
+        // Touch players need Mouse/Back and the LMB/RMB pair here too; the
+        // pause menu paints its own opaque panel, so draw the corner last.
+        #[cfg(target_os = "android")]
+        self.pad.touch_ui.draw_menu_corner(batch, atlas);
     }
     pub(super) fn pause_click(&mut self) -> Result<()> {
         let (w, h) = {

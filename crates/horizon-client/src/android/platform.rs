@@ -274,6 +274,33 @@ pub fn clipboard_get() -> Option<String> {
     })
 }
 
+/// The display's highest offered refresh rate and the one it is using now
+/// (`Display.getSupportedModes`), "max:current" from `HorizonActivity`.
+pub fn display_refresh() -> Option<(f32, f32)> {
+    let text: String = with_context(|env, activity| {
+        let value = env
+            .call_method(activity, "displayRefresh", "()Ljava/lang/String;", &[])?
+            .l()?;
+        if value.is_null() {
+            return Ok(String::new());
+        }
+        let value = jni::objects::JString::from(value);
+        let text: String = env.get_string(&value)?.into();
+        Ok(text)
+    })?;
+    let (max, current) = text.split_once(':')?;
+    let max: f32 = max.trim().parse().ok()?;
+    let current: f32 = current.trim().parse().ok()?;
+    (max > 0.0).then_some((max, current))
+}
+
+/// [`display_refresh`] for UI captions: the modes only change on a new
+/// display, so asking once per session is enough.
+pub fn display_refresh_cached() -> Option<(f32, f32)> {
+    static ONCE: std::sync::OnceLock<Option<(f32, f32)>> = std::sync::OnceLock::new();
+    *ONCE.get_or_init(display_refresh)
+}
+
 pub fn set_orientation(orientation: crate::catalog::Orientation) {
     with_context(|env, activity| {
         env.call_method(

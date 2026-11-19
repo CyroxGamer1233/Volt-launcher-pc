@@ -9,6 +9,9 @@ use std::{
 };
 use winit::{event::TouchPhase, keyboard::KeyCode};
 
+/// Row two of the menu corner: LMB and RMB, directly under Mouse and Back.
+const LMB_Y: f32 = 24.0;
+
 #[derive(Default)]
 pub struct TouchUi {
     pub expanded: bool,
@@ -22,6 +25,8 @@ pub struct TouchUi {
     pointer_drag: Option<(u64, bool)>,
     held_keys: BTreeMap<u64, KeyCode>,
     pub f3_latched: bool,
+    /// The finger sliding along the hotbar: every slot it crosses is picked.
+    pub hotbar_drag: Option<u64>,
 }
 struct RelativeTouch {
     id: u64,
@@ -310,6 +315,16 @@ impl TouchUi {
         if menu && (3.0..23.0).contains(&p[1]) && (w - 108.0..w - 56.0).contains(&p[0]) {
             return Some(Action::VirtualMouse);
         }
+        // LMB/RMB sit in the second row of the menu corner, under Mouse and
+        // Back, so the pause menu can click without the virtual mouse.
+        if menu && (LMB_Y..LMB_Y + 20.0).contains(&p[1]) {
+            if (w - 108.0..w - 56.0).contains(&p[0]) {
+                return Some(Action::MouseButton(false));
+            }
+            if (w - 53.0..w - 3.0).contains(&p[0]) {
+                return Some(Action::MouseButton(true));
+            }
+        }
         if (3.0..23.0).contains(&p[1]) {
             if menu && (w - 53.0..w - 3.0).contains(&p[0]) {
                 return Some(Action::Key(KeyCode::Escape));
@@ -368,21 +383,7 @@ impl TouchUi {
             );
         }
         if menu {
-            button(
-                b,
-                a,
-                if self.virtual_mouse {
-                    "Mouse ON"
-                } else {
-                    "Mouse"
-                },
-                b.width - 108.0,
-                3.0,
-                50.0,
-            );
-        }
-        if menu {
-            button(b, a, "Back", b.width - 53.0, 3.0, 50.0);
+            self.draw_menu_corner(b, a);
         }
         if self.expanded {
             button(
@@ -404,6 +405,31 @@ impl TouchUi {
                 );
             }
         }
+    }
+    /// The menu corner: Mouse, Back, and the LMB/RMB pair below them. Menus
+    /// paint opaque panels behind the overlay, so one solid plate carries all
+    /// four buttons; the pause menu calls this itself so the corner is there
+    /// even when the rest of the overlay is hidden.
+    pub fn draw_menu_corner(&self, b: &mut HudBatch, a: &HudAtlas) {
+        b.fill(
+            a,
+            b.width - 112.0,
+            0.0,
+            112.0,
+            LMB_Y + 23.0,
+            rgba(12, 13, 18, 150),
+        );
+        button(
+            b,
+            a,
+            if self.virtual_mouse { "Mouse ON" } else { "Mouse" },
+            b.width - 108.0,
+            3.0,
+            50.0,
+        );
+        button(b, a, "Back", b.width - 53.0, 3.0, 50.0);
+        button(b, a, "LMB", b.width - 108.0, LMB_Y, 50.0);
+        button(b, a, "RMB", b.width - 53.0, LMB_Y, 50.0);
     }
     pub fn keyboard_touch(
         &mut self,
@@ -477,10 +503,16 @@ mod tests {
         ));
         assert!(ui.action(427.0, 267.0, [350.0, 10.0], false).is_none());
         ui.virtual_mouse = true;
-        // The corner LMB/RMB buttons are gone: the primary/secondary touch
-        // buttons cover that, and they covered the menu's own corner.
-        assert!(ui.action(427.0, 267.0, [399.0, 226.0], true).is_none());
-        assert!(ui.action(427.0, 267.0, [399.0, 250.0], true).is_none());
+        // LMB and RMB sit in the row below Mouse and Back, and only in menus.
+        assert!(matches!(
+            ui.action(427.0, 267.0, [350.0, 30.0], true),
+            Some(Action::MouseButton(false))
+        ));
+        assert!(matches!(
+            ui.action(427.0, 267.0, [400.0, 30.0], true),
+            Some(Action::MouseButton(true))
+        ));
+        assert!(ui.action(427.0, 267.0, [350.0, 30.0], false).is_none());
         assert!(ui.action(427.0, 267.0, [213.0, 250.0], true).is_none());
     }
     #[test]
