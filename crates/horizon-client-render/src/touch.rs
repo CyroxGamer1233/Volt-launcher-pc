@@ -147,6 +147,9 @@ pub struct TouchControls {
     pub menu_screen: bool,
     pub editor: Option<editor::Editor>,
     fingers: BTreeMap<u64, (Role, [f32; 2])>,
+    /// Fingers that went down on a held button: they follow the pad and swap
+    /// the control they press as they slide, until they lift.
+    sweeping: std::collections::BTreeSet<u64>,
     custom_fingers: BTreeMap<u64, custom::CustomFinger>,
     toggled_custom: BTreeMap<usize, Vec<String>>,
     active_custom_tokens: Vec<String>,
@@ -378,6 +381,38 @@ impl TouchControls {
             Control::Inventory => Button::North,
             _ => return None,
         })
+    }
+    /// Controls a finger may slide onto while it stays down: the ones that
+    /// act like a key held for as long as the finger is on them. One-shot
+    /// controls (chat, settings, debug, inventory, pause) and the sneak and
+    /// sprint toggles stay clear of it, so a thumb crossing one of them on the
+    /// way to the next button cannot fire it.
+    fn sweeps_onto(&self, c: Control) -> bool {
+        match c {
+            Control::Jump | Control::Attack | Control::Use | Control::Shield => true,
+            Control::Sneak => !self.sneak_toggles(),
+            Control::Sprint => !self.settings.sprint_toggle,
+            _ => false,
+        }
+    }
+    /// The role a sliding finger takes over `control`, if any.
+    fn sweep_role(&self, c: Control) -> Option<Role> {
+        if !self.sweeps_onto(c) {
+            return None;
+        }
+        match c {
+            Control::Shield => Some(Role::Shield),
+            other => Self::button(other).map(Role::Button),
+        }
+    }
+    /// Tells two sweep roles apart: which control the finger holds now, and
+    /// whether it is the shield raised rather than a bare trigger.
+    fn sweep_key(role: &Role) -> (u8, Option<Button>) {
+        match role {
+            Role::Button(b) => (0, Some(*b)),
+            Role::Shield => (1, Some(Button::LeftTrigger)),
+            _ => (2, None),
+        }
     }
     pub fn draw(&self, b: &mut HudBatch, a: &HudAtlas) {
         let (w, h) = (b.width, b.height);
@@ -698,6 +733,7 @@ impl TouchControls {
             return delta;
         }
         if ended {
+            self.sweeping.remove(&id);
             if let Some((
                 Role::Look {
                     start,
@@ -724,6 +760,9 @@ impl TouchControls {
         }
         if started {
             let control = self.control_at(point);
+            if control.is_some_and(|c| self.sweeps_onto(c)) {
+                self.sweeping.insert(id);
+            }
             if control == Some(Control::Sneak) {
                 self.last_sneak_button = Some(Instant::now());
             }
@@ -799,7 +838,37 @@ impl TouchControls {
             return [0.0; 2];
         }
         let aspect = self.aspect();
+        // A finger that went down on a held button follows the pad: sliding
+        // onto the next one lets go of the last and presses the new one, and
+        // sliding off into the gap lets go, so a thumb can sweep across jump,
+        // attack and use without lifting between them.
+        let sweep = if self.sweeping.contains(&id) {
+            let next = self
+                .control_at(point)
+                .and_then(|c| self.sweep_role(c))
+                .unwrap_or(Role::Ignore);
+            self.fingers
+                .get(&id)
+                .map(|(role, _)| Self::sweep_key(role))
+                .filter(|held| *held != Self::sweep_key(&next))
+                .map(|_| next)
+        } else {
+            None
+        };
+        if let Some(next) = sweep {
+            // Land the new press on the very next poll even if the thumb is
+            // already moving on, so a quick sweep across a button counts.
+            match next {
+                Role::Shield | Role::Button(Button::LeftTrigger) => self.pending.triggers[0] = 1.0,
+                Role::Button(Button::RightTrigger) => self.pending.triggers[1] = 1.0,
+                Role::Button(button) => self.pending.set(button, true),
+                _ => {}
+            }
+        }
         if let Some((role, previous)) = self.fingers.get_mut(&id) {
+            if let Some(next) = sweep {
+                *role = next;
+            }
             let delta = if let Role::Look {
                 start,
                 dragged,
@@ -828,6 +897,7 @@ impl TouchControls {
     pub fn clear(&mut self) {
         self.clear_custom();
         self.fingers.clear();
+        self.sweeping.clear();
         self.last_sneak_button = None;
         self.sprint_latched = false;
         self.pending = PadState::default();
@@ -1458,6 +1528,49 @@ mod tests {
     }
 
     use super::*;
+    /// A finger that goes down on a held control follows the pad: sliding onto
+    /// the next one lets go of the last and presses it, the gap between them
+    /// holds nothing, one-shot controls crossed on the way do not fire, and
+    /// sliding back presses the first one again — all without lifting.
+    #[test]
+    fn sliding_a_finger_carries_the_press_between_controls() {
+        use crate::gamepad::Button;
+        let mut t = TouchControls::default();
+        t.viewport(1920, 1080);
+        t.settings.button_visibility[Control::Jump as usize] = 1;
+        t.settings.button_visibility[Control::Attack as usize] = 1;
+        let jump = t.placement(Control::Jump).center;
+        let attack = t.placement(Control::Attack).center;
+        let chat = t.placement(Control::Chat).center;
+        assert_eq!(t.control_at(jump), Some(Control::Jump));
+        assert_eq!(t.control_at(attack), Some(Control::Attack));
+
+        t.update(9, jump, true, false);
+        let down = t.poll_state();
+        assert!(down.held(Button::South), "the press starts on jump");
+        assert_eq!(down.triggers[1], 0.0);
+
+        t.update(9, attack, false, false);
+        let slid = t.poll_state();
+        assert!(!slid.held(Button::South), "jump lets go as the thumb leaves");
+        assert_eq!(slid.triggers[1], 1.0, "attack takes the press");
+
+        // Chat is not a held control: crossing it presses nothing.
+        t.update(9, chat, false, false);
+        let crossed = t.poll_state();
+        assert_eq!(crossed.triggers[1], 0.0, "attack lets go");
+        assert!(!crossed.held(Button::South));
+        assert!(!t.chat_requested, "sweeping over chat does not open it");
+
+        t.update(9, jump, false, false);
+        assert!(
+            t.poll_state().held(Button::South),
+            "sliding back presses jump again"
+        );
+        t.update(9, jump, false, true);
+        assert!(!t.poll_state().held(Button::South), "lifting releases it");
+    }
+
     #[test]
     fn editor_add_row_creates_a_button_without_closing_the_editor() {
         let mut touch = TouchControls::default();
