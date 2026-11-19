@@ -27,7 +27,7 @@
 | **armeabi-v7a** — older 32-bit phones | [![armeabi-v7a](https://img.shields.io/badge/⬇%20armeabi--v7a-51%20MB-ff2d2d?style=for-the-badge)](https://github.com/entitybrian69-bit/Volt-launcher/releases/download/debug/Volt-Launcher-debug-armeabi-v7a.apk) |
 | **x86_64** — emulators, Chromebooks | [![x86_64](https://img.shields.io/badge/⬇%20x86__64-81%20MB-ff2d2d?style=for-the-badge)](https://github.com/entitybrian69-bit/Volt-launcher/releases/download/debug/Volt-Launcher-debug-x86_64.apk) |
 | **x86** — older emulators | [![x86](https://img.shields.io/badge/⬇%20x86-74%20MB-ff2d2d?style=for-the-badge)](https://github.com/entitybrian69-bit/Volt-launcher/releases/download/debug/Volt-Launcher-debug-x86.apk) |
-| **universal** — one file, every ABI above | [![universal](https://img.shields.io/badge/⬇%20universal-270%20MB-ff2d2d?style=for-the-badge)](https://github.com/entitybrian69-bit/Volt-launcher/releases/download/debug/Volt-Launcher-debug-universal.apk) |
+| **universal** — one file, every ABI above | [![universal](https://img.shields.io/badge/⬇%20universal-242%20MB-ff2d2d?style=for-the-badge)](https://github.com/entitybrian69-bit/Volt-launcher/releases/download/debug/Volt-Launcher-debug-universal.apk) |
 
 <sub>The rolling debug build installs as <b>Volt Debug</b>, so it sits beside a stable install. [All releases →](https://github.com/entitybrian69-bit/Volt-launcher/releases)</sub>
 
