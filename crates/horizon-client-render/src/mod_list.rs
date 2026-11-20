@@ -128,30 +128,25 @@ impl ModList {
     }
     pub fn is_on(&self, i: usize) -> bool {
         self.installed.get(i).is_some_and(|m| {
-            m.dev
-                || if m.native.is_some() {
-                    !self.disabled.contains(&m.id)
-                } else {
-                    self.enabled.contains(&m.id)
-                }
+            // Every mod starts off, native ones included: a new install has
+            // never asked for any of them, and turning them all on is what
+            // made a fresh profile behave differently from vanilla.
+            m.dev || self.enabled.contains(&m.id)
         })
     }
-    /// Turns installed mod `i` on or off (a dev mod stays on). A native mod's
-    /// line says `false` when off, so that the launcher's next build leaves
-    /// it out, and `true` when on again.
+    /// Turns installed mod `i` on or off (a dev mod stays on). A native mod
+    /// also writes the `false` line when off, so the launcher's next build
+    /// leaves it out, and `true` when it is turned back on.
     pub fn toggle(&mut self, i: usize) {
         let Some(m) = self.installed.get(i).filter(|m| !m.dev) else {
             return;
         };
-        if m.native.is_some() {
-            if self.disabled.remove(&m.id) {
-                self.enabled.insert(m.id.clone());
-            } else {
-                self.enabled.remove(&m.id);
-                self.disabled.insert(m.id.clone());
-            }
-        } else if !self.enabled.remove(&m.id) {
+        if !self.enabled.remove(&m.id) {
             self.enabled.insert(m.id.clone());
+        } else if m.native.is_some() {
+            // Native mods also record the "off" line, so the launcher's next
+            // build knows to leave them out of the running set.
+            self.disabled.insert(m.id.clone());
         }
     }
 }
@@ -206,14 +201,18 @@ mod tests {
             native: Some(NativePage::default()),
             ..installed("c", false)
         });
-        // On until turned off; off, the launcher leaves it out.
-        assert!(list.is_on(2));
-        list.toggle(2);
+        // Off until turned on, like every other mod: a fresh profile has not
+        // asked for it. Off, the launcher also leaves it out of the build.
         assert!(!list.is_on(2));
-        assert_eq!(list.serialize(), "mod.c:false\n");
-        assert_eq!(ModList::parse(&list.serialize()).disabled, list.disabled);
         list.toggle(2);
         assert!(list.is_on(2));
         assert_eq!(list.serialize(), "mod.c:true\n");
+        list.toggle(2);
+        assert!(!list.is_on(2));
+        // Only a native mod records the "off" line, so the launcher's next
+        // build can leave it out; an ordinary mod just stops being listed.
+        assert_eq!(list.serialize(), "mod.c:false\n");
+        assert_eq!(ModList::parse(&list.serialize()).disabled, list.disabled);
+        assert!(ModList::parse(&list.serialize()).enabled.is_empty());
     }
 }

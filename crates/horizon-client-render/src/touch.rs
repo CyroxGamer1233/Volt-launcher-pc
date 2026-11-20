@@ -109,6 +109,14 @@ pub fn hotbar_slot(width: f32, height: f32, point: [f32; 2]) -> Option<usize> {
     (point[1] >= height - 22.0 && point[1] < height && (0.0..180.0).contains(&x))
         .then(|| (x / 20.0) as usize)
 }
+
+/// The hotbar slot under a finger sliding along the bar: the y band is
+/// ignored so a wandering thumb keeps changing slots instead of dropping the
+/// gesture.
+pub fn hotbar_slot_at_x(width: f32, x: f32) -> Option<usize> {
+    let x = x - (width / 2.0 - 90.0);
+    (0.0..180.0).contains(&x).then(|| (x / 20.0) as usize)
+}
 #[derive(Clone, Copy)]
 enum Role {
     Move([f32; 2]),
@@ -139,6 +147,9 @@ pub struct TouchControls {
     pub menu_screen: bool,
     pub editor: Option<editor::Editor>,
     fingers: BTreeMap<u64, (Role, [f32; 2])>,
+    /// Fingers that went down on a held button: they follow the pad and swap
+    /// the control they press as they slide, until they lift.
+    sweeping: std::collections::BTreeSet<u64>,
     custom_fingers: BTreeMap<u64, custom::CustomFinger>,
     toggled_custom: BTreeMap<usize, Vec<String>>,
     active_custom_tokens: Vec<String>,
@@ -174,6 +185,9 @@ pub struct TouchControls {
     pub holding: bool,
     pub break_progress: f32,
     last_marker: Option<([f32; 2], Instant)>,
+    /// Set when the overlay (O) button is held down: the menu opens on release.
+    /// A short tap still toggles the overlay as before.
+    pub overlay_menu_open: bool,
     /// When the on-screen sneak button was last pressed. The pad merge uses
     /// it to force toggle behavior for touch-origin sneaks, even when the
     /// controller's stick-click is configured as hold-to-sneak.
@@ -367,6 +381,38 @@ impl TouchControls {
             Control::Inventory => Button::North,
             _ => return None,
         })
+    }
+    /// Controls a finger may slide onto while it stays down: the ones that
+    /// act like a key held for as long as the finger is on them. One-shot
+    /// controls (chat, settings, debug, inventory, pause) and the sneak and
+    /// sprint toggles stay clear of it, so a thumb crossing one of them on the
+    /// way to the next button cannot fire it.
+    fn sweeps_onto(&self, c: Control) -> bool {
+        match c {
+            Control::Jump | Control::Attack | Control::Use | Control::Shield => true,
+            Control::Sneak => !self.sneak_toggles(),
+            Control::Sprint => !self.settings.sprint_toggle,
+            _ => false,
+        }
+    }
+    /// The role a sliding finger takes over `control`, if any.
+    fn sweep_role(&self, c: Control) -> Option<Role> {
+        if !self.sweeps_onto(c) {
+            return None;
+        }
+        match c {
+            Control::Shield => Some(Role::Shield),
+            other => Self::button(other).map(Role::Button),
+        }
+    }
+    /// Tells two sweep roles apart: which control the finger holds now, and
+    /// whether it is the shield raised rather than a bare trigger.
+    fn sweep_key(role: &Role) -> (u8, Option<Button>) {
+        match role {
+            Role::Button(b) => (0, Some(*b)),
+            Role::Shield => (1, Some(Button::LeftTrigger)),
+            _ => (2, None),
+        }
     }
     pub fn draw(&self, b: &mut HudBatch, a: &HudAtlas) {
         let (w, h) = (b.width, b.height);
@@ -579,9 +625,37 @@ impl TouchControls {
             self.draw_editor(b, a);
         } else if let Some(point) = self.pointer() {
             let center = [point[0] * w, point[1] * h];
-            let radius = self.settings.circle_size / 2.0;
-            ring(b, a, center, radius + 0.7, rgba(0, 0, 0, 110));
-            ring(b, a, center, radius, rgba(255, 255, 255, 210));
+            // The Mouse Settings page scales the ring and fades it, so a player
+            // can make the cursor easier to see (or get it out of the way).
+            let radius = self.settings.circle_size / 2.0 * self.settings.pointer_scale;
+            let alpha =
+                |base: u8| ((f32::from(base) * self.settings.pointer_opacity) as u8).max(8);
+            // Mouse Settings > Cursor style: a ring, a dot, a cross, or nothing
+            // at all, so the pointer can be as loud or as quiet as the player
+            // wants on a small screen.
+            match self.settings.pointer_style {
+                1 => {
+                    let r = (radius * 0.22).max(1.5);
+                    ring(b, a, center, r + 0.7, rgba(0, 0, 0, alpha(110)));
+                    ring(b, a, center, r, rgba(255, 255, 255, alpha(210)));
+                }
+                2 => {
+                    let arm = radius.max(3.0);
+                    let gap = (arm * 0.28).max(1.5);
+                    for (dx, dy) in [(1.0, 0.0), (-1.0, 0.0), (0.0, 1.0), (0.0, -1.0)] {
+                        let (x0, y0) = (center[0] + dx * gap, center[1] + dy * gap);
+                        let (x1, y1) = (center[0] + dx * arm, center[1] + dy * arm);
+                        b.fill(a, x0.min(x1), y0.min(y1) - 0.5,
+                            (x1 - x0).abs().max(1.0), (y1 - y0).abs().max(1.0),
+                            rgba(255, 255, 255, alpha(210)));
+                    }
+                }
+                3 => {}
+                _ => {
+                    ring(b, a, center, radius + 0.7, rgba(0, 0, 0, alpha(110)));
+                    ring(b, a, center, radius, rgba(255, 255, 255, alpha(210)));
+                }
+            }
             // A complete inner circle expands towards the stationary outer rim.
             // Progress changes its radius, never its angular coverage.
             let inner = mining_radius(radius, self.break_progress);
@@ -659,6 +733,7 @@ impl TouchControls {
             return delta;
         }
         if ended {
+            self.sweeping.remove(&id);
             if let Some((
                 Role::Look {
                     start,
@@ -685,6 +760,9 @@ impl TouchControls {
         }
         if started {
             let control = self.control_at(point);
+            if control.is_some_and(|c| self.sweeps_onto(c)) {
+                self.sweeping.insert(id);
+            }
             if control == Some(Control::Sneak) {
                 self.last_sneak_button = Some(Instant::now());
             }
@@ -760,7 +838,37 @@ impl TouchControls {
             return [0.0; 2];
         }
         let aspect = self.aspect();
+        // A finger that went down on a held button follows the pad: sliding
+        // onto the next one lets go of the last and presses the new one, and
+        // sliding off into the gap lets go, so a thumb can sweep across jump,
+        // attack and use without lifting between them.
+        let sweep = if self.sweeping.contains(&id) {
+            let next = self
+                .control_at(point)
+                .and_then(|c| self.sweep_role(c))
+                .unwrap_or(Role::Ignore);
+            self.fingers
+                .get(&id)
+                .map(|(role, _)| Self::sweep_key(role))
+                .filter(|held| *held != Self::sweep_key(&next))
+                .map(|_| next)
+        } else {
+            None
+        };
+        if let Some(next) = sweep {
+            // Land the new press on the very next poll even if the thumb is
+            // already moving on, so a quick sweep across a button counts.
+            match next {
+                Role::Shield | Role::Button(Button::LeftTrigger) => self.pending.triggers[0] = 1.0,
+                Role::Button(Button::RightTrigger) => self.pending.triggers[1] = 1.0,
+                Role::Button(button) => self.pending.set(button, true),
+                _ => {}
+            }
+        }
         if let Some((role, previous)) = self.fingers.get_mut(&id) {
+            if let Some(next) = sweep {
+                *role = next;
+            }
             let delta = if let Role::Look {
                 start,
                 dragged,
@@ -789,6 +897,7 @@ impl TouchControls {
     pub fn clear(&mut self) {
         self.clear_custom();
         self.fingers.clear();
+        self.sweeping.clear();
         self.last_sneak_button = None;
         self.sprint_latched = false;
         self.pending = PadState::default();
@@ -1257,10 +1366,16 @@ mod tests {
         let p = t.placement(Control::Shield).center;
         t.update(2, p, true, false);
         assert!(t.shield_held());
+        assert!(t.poll_state().triggers[0] > 0.0);
+        // The raise follows the thumb: sliding off the button lowers it, and
+        // sliding back raises it again, both without lifting.
         t.update(2, [0.5, 0.4], false, false);
+        assert!(!t.shield_held());
+        assert_eq!(t.poll_state().triggers[0], 0.0);
+        t.update(2, p, false, false);
         assert!(t.shield_held());
         assert!(t.poll_state().triggers[0] > 0.0);
-        t.update(2, [0.5, 0.4], false, true);
+        t.update(2, p, false, true);
         assert!(!t.shield_held());
         assert_eq!(t.poll_state().triggers[0], 0.0);
     }
@@ -1419,6 +1534,54 @@ mod tests {
     }
 
     use super::*;
+    /// A finger that goes down on a held control follows the pad: sliding onto
+    /// the next one lets go of the last and presses it, the gap between them
+    /// holds nothing, one-shot controls crossed on the way do not fire, and
+    /// sliding back presses the first one again — all without lifting.
+    #[test]
+    fn sliding_a_finger_carries_the_press_between_controls() {
+        use crate::gamepad::Button;
+        // Lay the pad out from the built-in defaults, never from a layout
+        // file a developer's device may have left behind.
+        let mut t = TouchControls {
+            aspect: 1920.0 / 1080.0,
+            loaded: true,
+            ..Default::default()
+        };
+        t.settings.button_visibility[Control::Jump as usize] = 1;
+        t.settings.button_visibility[Control::Attack as usize] = 1;
+        let jump = t.placement(Control::Jump).center;
+        let attack = t.placement(Control::Attack).center;
+        let chat = t.placement(Control::Chat).center;
+        assert_eq!(t.control_at(jump), Some(Control::Jump));
+        assert_eq!(t.control_at(attack), Some(Control::Attack));
+
+        t.update(9, jump, true, false);
+        let down = t.poll_state();
+        assert!(down.held(Button::South), "the press starts on jump");
+        assert_eq!(down.triggers[1], 0.0);
+
+        t.update(9, attack, false, false);
+        let slid = t.poll_state();
+        assert!(!slid.held(Button::South), "jump lets go as the thumb leaves");
+        assert_eq!(slid.triggers[1], 1.0, "attack takes the press");
+
+        // Chat is not a held control: crossing it presses nothing.
+        t.update(9, chat, false, false);
+        let crossed = t.poll_state();
+        assert_eq!(crossed.triggers[1], 0.0, "attack lets go");
+        assert!(!crossed.held(Button::South));
+        assert!(!t.chat_requested, "sweeping over chat does not open it");
+
+        t.update(9, jump, false, false);
+        assert!(
+            t.poll_state().held(Button::South),
+            "sliding back presses jump again"
+        );
+        t.update(9, jump, false, true);
+        assert!(!t.poll_state().held(Button::South), "lifting releases it");
+    }
+
     #[test]
     fn editor_add_row_creates_a_button_without_closing_the_editor() {
         let mut touch = TouchControls::default();
@@ -1928,6 +2091,12 @@ mod tests {
             );
         }
         assert_eq!(hotbar_slot(427.0, 240.0, [320.0, 230.0]), None);
+        // Sliding across the bar keeps resolving slots at the same x, even
+        // when the finger drifts up out of the bar's own band.
+        for i in 0..9 {
+            assert_eq!(hotbar_slot_at_x(427.0, 133.5 + i as f32 * 20.0), Some(i));
+        }
+        assert_eq!(hotbar_slot_at_x(427.0, 320.0), None);
     }
     #[test]
     fn old_profiles_keep_custom_layouts_and_new_preferences_have_safe_defaults() {

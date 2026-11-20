@@ -27,8 +27,11 @@
 | **armeabi-v7a** — older 32-bit phones | [![armeabi-v7a](https://img.shields.io/badge/⬇%20armeabi--v7a-51%20MB-ff2d2d?style=for-the-badge)](https://github.com/entitybrian69-bit/Volt-launcher/releases/download/debug/Volt-Launcher-debug-armeabi-v7a.apk) |
 | **x86_64** — emulators, Chromebooks | [![x86_64](https://img.shields.io/badge/⬇%20x86__64-81%20MB-ff2d2d?style=for-the-badge)](https://github.com/entitybrian69-bit/Volt-launcher/releases/download/debug/Volt-Launcher-debug-x86_64.apk) |
 | **x86** — older emulators | [![x86](https://img.shields.io/badge/⬇%20x86-74%20MB-ff2d2d?style=for-the-badge)](https://github.com/entitybrian69-bit/Volt-launcher/releases/download/debug/Volt-Launcher-debug-x86.apk) |
+| **universal** — one file, every ABI above | [![universal](https://img.shields.io/badge/⬇%20universal-242%20MB-ff2d2d?style=for-the-badge)](https://github.com/entitybrian69-bit/Volt-launcher/releases/download/debug/Volt-Launcher-debug-universal.apk) |
 
 <sub>The rolling debug build installs as <b>Volt Debug</b>, so it sits beside a stable install. [All releases →](https://github.com/entitybrian69-bit/Volt-launcher/releases)</sub>
+
+<sub>**If Android warns that the APK "may be harmful".** Play Protect shows that for apps it has never seen from Google Play, not only for malware: the build is signed with the same certificate as every Volt release and `SHA256SUMS.txt` on the release page verifies the file. To install, tap **More details → Install anyway** (or **Settings → Apps → Special access → Install unknown apps** for your browser/file manager, then retry). Installs and updates in the launcher itself never show the warning.</sub>
 
 </div>
 
@@ -45,7 +48,7 @@
       <br><sub>DOWNLOADS</sub>
     </td>
     <td align="center" bgcolor="#ff2d2d">
-      <a href="https://github.com/entitybrian69-bit/Volt-launcher/releases/tag/v1.1.1"><img src="https://img.shields.io/badge/v1.1.1-RELEASE-white?style=for-the-badge" alt="v1.1.1"></a>
+      <a href="https://github.com/entitybrian69-bit/Volt-launcher/releases/tag/v1.2"><img src="https://img.shields.io/badge/v1.2-RELEASE-white?style=for-the-badge" alt="v1.2"></a>
       <br><sub>RELEASE</sub>
     </td>
     <td align="center" bgcolor="#ff2d2d">

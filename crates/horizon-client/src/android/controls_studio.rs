@@ -379,6 +379,7 @@ impl ControlsStudio {
             buttons: self.settings.custom_buttons.len(),
             drawers: self.drawer_count(),
             has_joystick: self.joystick_visible(),
+            distinct: 0,
         });
     }
 
@@ -1170,9 +1171,16 @@ impl ControlsStudio {
                                 btn.key = btn.extra_keys.remove(0);
                             }
                         } else {
+                            // Clear in place: removing would slide the slots
+                            // below this one up by one.
                             let at = self.bind_slot - 1;
+                            while btn.extra_keys.len() < at {
+                                btn.extra_keys.push("key.keyboard.unknown".into());
+                            }
                             if at < btn.extra_keys.len() {
-                                btn.extra_keys.remove(at);
+                                btn.extra_keys[at] = "key.keyboard.unknown".into();
+                            } else {
+                                btn.extra_keys.push("key.keyboard.unknown".into());
                             }
                         }
                         self.status_hint = format!("Slot {} cleared.", self.bind_slot + 1);
@@ -1184,14 +1192,21 @@ impl ControlsStudio {
                         btn.key = token.to_owned();
                         self.status_hint = format!("Bound to {disp}.");
                     } else if btn.key != token && !btn.extra_keys.iter().any(|k| k == token) {
+                        // Fill any empty slots before this one, so slot 4 does
+                        // not silently become slot 2 when it is bound first.
                         let at = self.bind_slot - 1;
+                        while btn.extra_keys.len() < at {
+                            btn.extra_keys.push("key.keyboard.unknown".into());
+                        }
                         if at < btn.extra_keys.len() {
                             btn.extra_keys[at] = token.to_owned();
-                        } else if btn.extra_keys.len() < 3 {
+                        } else {
                             btn.extra_keys.push(token.to_owned());
                         }
-                        self.status_hint =
-                            format!("Slot {} presses {disp} together.", self.bind_slot + 1);
+                        self.status_hint = format!(
+                            "Slot {} presses {disp} together with the others.",
+                            self.bind_slot + 1
+                        );
                     } else {
                         self.status_hint = "That key is already on this button.".into();
                     }
@@ -1522,6 +1537,7 @@ impl ControlsStudio {
                     buttons: self.settings.custom_buttons.len(),
                     drawers: self.drawer_count(),
                     has_joystick: self.joystick_visible(),
+                    distinct: 0,
                 };
                 self.settings.imported_from = Some(meta.clone());
                 let layout = ImportedControlLayout {
@@ -1588,7 +1604,14 @@ impl ControlsStudio {
         // Hint text, top center (Pojav's two helper lines).
         if self.selected.is_none() && !self.overlay_open() {
             let l1 = "Touch the cogwheel icon to open the context menu";
-            let l2 = "Tap a button to customize: edit, resize, remove, or change its keybinds.";
+            // The frame the game is actually drawing into, so a screen that
+            // does not match the display can be reported instead of guessed
+            // at. `w` x `h` is the drawable the editor lays out inside.
+            let l2 = format!(
+                "Tap a button to customize. Drawing area {:.0}x{:.0} dp.",
+                w, h
+            );
+            let l2 = l2.as_str();
             let w1 = ui.measure(Face::LauncherRegular, 12.0, l1);
             let w2 = ui.measure(Face::LauncherRegular, 11.0, l2);
             ui.text(Face::LauncherRegular, 12.0, (w - w1) / 2.0, 10.0, hex(0xE8E8F0, 220), l1);

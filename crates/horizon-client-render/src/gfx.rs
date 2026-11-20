@@ -430,6 +430,9 @@ pub struct Frame<'a> {
     /// `Screen.extractBlurredBackground`: blur the frame by this radius
     /// (`menuBackgroundBlurriness`) before the screen is drawn over it.
     pub menu_blur: Option<f32>,
+    /// The Motion Blur mod: smear the world (never the HUD) along the camera's
+    /// turn, as Natural Motion Blur does.
+    pub motion_blur: Option<crate::motion_blur::Params>,
     /// `Options.chunkSectionFadeInTime`, in seconds: how long a section takes to fade in once
     /// uploaded (0 draws it whole at once).
     pub chunk_fade: f32,
@@ -722,6 +725,7 @@ pub struct Renderer {
     pub hud: HudRenderer,
     /// Vanilla's menu background blur, made on first use.
     menu_blur: Option<crate::menu_blur::MenuBlur>,
+    motion_blur: Option<crate::motion_blur::MotionBlur>,
     /// `post_effect` chains, made on first use.
     post_effects: Option<crate::post_chain::PostEffects>,
     /// Where a screenshot's frame is drawn when the swapchain cannot be read back.
@@ -3459,6 +3463,7 @@ impl Renderer {
             pack_terrain_flat: false,
             hud,
             menu_blur: None,
+            motion_blur: None,
             post_effects: None,
             readback: readback::Readback::default(),
             info,
@@ -3603,6 +3608,9 @@ impl Renderer {
         let _ = self.device.poll(wgpu::PollType::wait_indefinitely());
         self.hud.atlas_texture = None;
         self.menu_blur = None;
+        if let Some(blur) = self.motion_blur.as_mut() {
+            blur.reset();
+        }
         self.last_animated_tick = None;
         let atlas = self.device.create_texture_with_data(
             &self.queue,
@@ -3809,6 +3817,9 @@ impl Renderer {
         self.sprite_textures.clear();
         self.pack_atlas = None;
         self.menu_blur = None;
+        if let Some(blur) = self.motion_blur.as_mut() {
+            blur.reset();
+        }
         self.last_animated_tick = None;
         let prepared = prepared
             .unwrap_or_else(|| {
@@ -5217,10 +5228,32 @@ impl Renderer {
             self.acquire_validation_failures = 0;
         }
         let size = [self.config.width, self.config.height];
+        // Android: the swapchain can be wider or taller than the size the
+        // window reports (a display inset, a curved edge, a cutout). When one
+        // axis matches and the other does not, the swapchain is the real
+        // drawable — adopt it, or the world fills the screen while the HUD and
+        // the touch layout stop at the reported inner size and leave a strip.
+        // Skipping one frame is enough: the game rebuilds the HUD at the new
+        // size on the next one. A render-scale change moves BOTH axes, so it
+        // keeps its smaller frame and its upscale.
+        #[cfg(target_os = "android")]
+        if let Some(f) = &surface_frame {
+            let physical = [f.texture.width(), f.texture.height()];
+            let inset = physical != size
+                && physical[0] > 0
+                && physical[1] > 0
+                && (physical[0] == size[0] || physical[1] == size[1]);
+            if inset {
+                self.config.width = physical[0];
+                self.config.height = physical[1];
+                return Ok(false);
+            }
+        }
         #[cfg(target_os = "android")]
         let scaled_presentation = surface_frame.as_ref().is_some_and(|f| {
             let physical = [f.texture.width(), f.texture.height()];
             frame.menu_blur.is_some()
+                || frame.motion_blur.is_some()
                 || self.screenshot.is_some()
                 // The Volt recorder copies (and scales) the frame on the GPU:
                 // Android swapchain images are pure RENDER_ATTACHMENT, so a
@@ -7252,10 +7285,16 @@ impl Renderer {
                 );
             }
         }
-        let menu_blur = frame
-            .menu_blur
-            .filter(|_| target_texture.usage().contains(wgpu::TextureUsages::COPY_SRC));
-        let blur_at = menu_blur.map_or(0, |_| frame.hud.blur_at);
+        let can_copy = target_texture
+            .usage()
+            .contains(wgpu::TextureUsages::COPY_SRC);
+        let menu_blur = frame.menu_blur.filter(|_| can_copy);
+        let motion_blur = frame.motion_blur.filter(|_| can_copy);
+        let blur_at = if menu_blur.is_some() || motion_blur.is_some() {
+            frame.hud.blur_at
+        } else {
+            0
+        };
         self.hud.draw_range(
             &mut encoder,
             &view_target,
@@ -7264,7 +7303,23 @@ impl Renderer {
             [self.config.width, self.config.height],
             0..blur_at,
         );
-        if let Some(radius) = menu_blur {
+        if let Some(params) = motion_blur {
+            // The Motion Blur mod: world smeared, HUD (drawn from `blur_at`
+            // on) left perfectly sharp, exactly like the mod's post chain.
+            let format = self.config.format;
+            let device = &self.device;
+            self.motion_blur
+                .get_or_insert_with(|| crate::motion_blur::MotionBlur::new(device, format))
+                .apply(
+                    &self.device,
+                    &self.queue,
+                    &mut encoder,
+                    &target_texture,
+                    &view_target,
+                    [self.config.width, self.config.height],
+                    &params,
+                );
+        } else if let Some(radius) = menu_blur {
             let format = self.config.format;
             let device = &self.device;
             self.menu_blur

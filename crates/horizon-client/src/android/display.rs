@@ -47,6 +47,9 @@ impl RenderScale {
 
 #[cfg(target_os = "android")]
 static REQUESTED_SCALE: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(100);
+/// The last size asked of the platform, so a refusal is not retried forever.
+#[cfg(target_os = "android")]
+static LAST_REQUESTED: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 
 #[cfg(target_os = "android")]
 pub fn set_scale(scale: RenderScale) {
@@ -62,12 +65,13 @@ fn desired(window: &winit::window::Window) -> Option<[u32; 2]> {
     if physical.width == 0 || physical.height == 0 {
         return None;
     }
-    let [_, _, width, height] =
-        winit::platform::android::native_content_rect([physical.width, physical.height]);
-    // Upstream (Horizon Android): never a zero-sized view — a fold or
-    // rotation can report an empty content rect for a frame, which would
-    // divide the input scale by zero below.
-    let view = [width.max(1), height.max(1)];
+    // Size the frame from the WHOLE window, not from the safe "content
+    // rect". On devices whose content rect is inset (a curved or cutout
+    // edge), sizing from it shrank the render target — and with it the HUD,
+    // the touch layout and every panel — to a band that stopped short of the
+    // screen edge while the strip beyond it kept showing the game. Kotlin's
+    // margin settings still keep controls clear of the edges.
+    let view = [physical.width.max(1), physical.height.max(1)];
     let size = scale.buffer_size(view);
     // Upstream sets the input scale before comparing sizes, so touches map
     // correctly even on the frames where a resize is still pending.
@@ -76,8 +80,15 @@ fn desired(window: &winit::window::Window) -> Option<[u32; 2]> {
         size[1] as f64 / view[1] as f64,
     ]);
     if size == [current.width, current.height] {
+        LAST_REQUESTED.store(0, std::sync::atomic::Ordering::Relaxed);
         None
     } else {
+        // Never ask for the same size twice in a row: if the platform will
+        // not grant it, re-requesting every frame would churn the surface.
+        let packed = size[0] ^ size[1].rotate_left(16);
+        if LAST_REQUESTED.swap(packed, std::sync::atomic::Ordering::Relaxed) == packed {
+            return None;
+        }
         Some(size)
     }
 }
@@ -86,13 +97,9 @@ fn desired(window: &winit::window::Window) -> Option<[u32; 2]> {
 fn set_render_size(window: &winit::window::Window, size: [u32; 2]) -> Result<[u32; 2], String> {
     use winit::platform::android::WindowExtAndroid;
     let native = REQUESTED_SCALE.load(std::sync::atomic::Ordering::Relaxed) == 100;
-    let physical = window.outer_size();
-    let rect = winit::platform::android::native_content_rect([physical.width, physical.height]);
-    let target = if native && rect == [0, 0, physical.width, physical.height] {
-        [0, 0]
-    } else {
-        size
-    };
+    // At 100% the surface is the window's own size: asking for it explicitly
+    // pins the surface to the content rect, which is what left the strip.
+    let target = if native { [0, 0] } else { size };
     let actual = window
         .set_render_size(winit::dpi::PhysicalSize::new(target[0], target[1]))
         .map_err(|e| e.to_string())?;

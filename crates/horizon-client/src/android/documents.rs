@@ -528,9 +528,18 @@ fn stage_controls(
             (false, true) => ", joystick".into(),
             (false, false) => String::new(),
         };
+        // Report stacking explicitly. A layout whose buttons share slots
+        // used to look like "controls piled into a column" with nothing in the
+        // UI explaining why, so say it at import time.
+        let stacked = parsed.meta.buttons.saturating_sub(parsed.meta.distinct);
+        let warn = if parsed.meta.buttons > 0 && stacked > 0 {
+            format!(" — {stacked} button(s) had no position and were spread out")
+        } else {
+            String::new()
+        };
         controls_imported(format!(
-            "Imported \"{}\" ({} • {} buttons{}) — active now!",
-            parsed.meta.name, parsed.meta.format, parsed.meta.buttons, extras
+            "Imported \"{}\" ({} • {} buttons, {} placed{}) — active now!{}",
+            parsed.meta.name, parsed.meta.format, parsed.meta.buttons, parsed.meta.distinct, extras, warn
         ));
         Ok(())
     })();

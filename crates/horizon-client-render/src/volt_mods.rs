@@ -16,7 +16,7 @@ use crate::{
     ui,
 };
 
-pub const TOTAL_VOLT_MODS: usize = 49;
+pub const TOTAL_VOLT_MODS: usize = 51;
 
 /// Native zoom steps use Zoomify's default 1.5x ratio and ten tiers. This
 /// is independent of the animated camera FOV, which remains owned by the game.
@@ -70,7 +70,7 @@ pub fn upstream_icon(id: VoltModId) -> Option<(&'static str, &'static [u8])> {
     }
 }
 
-/// Categories organizing all 49 native Rust mods in both the Launcher `Mods` tab
+/// Categories organizing all 51 native Rust mods in both the Launcher `Mods` tab
 /// and the in-game `Mod Menu`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum VoltModCategory {
@@ -169,6 +169,9 @@ pub enum VoltModId {
     XaerosWorldMap = 46,
     LanguageReload = 47,
     FastQuit = 48,
+    // --- 6. Visual feel (2) ---
+    MotionBlur = 49,
+    HitReg = 50,
 }
 
 impl VoltModId {
@@ -222,6 +225,8 @@ impl VoltModId {
         Self::XaerosWorldMap,
         Self::LanguageReload,
         Self::FastQuit,
+        Self::MotionBlur,
+        Self::HitReg,
     ];
 
     pub const fn index(self) -> usize {
@@ -378,9 +383,9 @@ pub const CATALOG: [VoltModMeta; TOTAL_VOLT_MODS] = [
         title: "Mod Menu",
         version: "11.0.3",
         category: VoltModCategory::PvpHud,
-        default_on: true,
+        default_on: false,
         summary: "Interactive in-game Mod Menu screen & live toggle manager.",
-        description: "Provides this split-pane Mod Menu screen (accessible from Options, Volt Settings, or pressing M in-game) to search, favorite, configure, and toggle all 49 native mods live.",
+        description: "Provides this split-pane Mod Menu screen (accessible from Options, Volt Settings, or pressing M in-game) to search, favorite, configure, and toggle all 51 native mods live.",
     },
     VoltModMeta {
         id: VoltModId::InventoryHudPlus,
@@ -580,7 +585,7 @@ pub const CATALOG: [VoltModMeta; TOTAL_VOLT_MODS] = [
         title: "Sodium",
         version: "0.6.5",
         category: VoltModCategory::Performance,
-        default_on: true,
+        default_on: false,
         summary: "Flagship Vulkan chunk mesher & hidden-face terrain pipeline.",
         description: "Accelerates world rendering on mobile & desktop GPUs via sealed-section interior occlusion, greedy-aligned quad emission, and zero-stall Vulkan chunk uploads.",
     },
@@ -590,7 +595,7 @@ pub const CATALOG: [VoltModMeta; TOTAL_VOLT_MODS] = [
         title: "Lithium",
         version: "0.14.7",
         category: VoltModCategory::Performance,
-        default_on: true,
+        default_on: false,
         summary: "General-purpose physics, AI tick & block-state fast paths.",
         description: "Optimizes AABB voxel collision sweeps, throttles distant passive AI pathing, and short-circuits redundant neighbor state lookups without altering vanilla mechanics.",
     },
@@ -600,7 +605,7 @@ pub const CATALOG: [VoltModMeta; TOTAL_VOLT_MODS] = [
         title: "FerriteCore",
         version: "7.1.1",
         category: VoltModCategory::Performance,
-        default_on: true,
+        default_on: false,
         summary: "Compact block-state tables & pooled mesh scratch memory.",
         description: "Slashes RAM usage and allocator churn on Android devices by pooling chunk mesher vertex buffers and compacting palette/model metadata in memory.",
     },
@@ -610,7 +615,7 @@ pub const CATALOG: [VoltModMeta; TOTAL_VOLT_MODS] = [
         title: "ImmediatelyFast",
         version: "1.3.4",
         category: VoltModCategory::Performance,
-        default_on: true,
+        default_on: false,
         summary: "Coalesced HUD, text, entity & item-icon GPU draw batching.",
         description: "Batches immediate-mode UI quads, font glyphs, item icons, and entity layers into single contiguous GPU uploads to minimize Vulkan pipeline switches.",
     },
@@ -620,7 +625,7 @@ pub const CATALOG: [VoltModMeta; TOTAL_VOLT_MODS] = [
         title: "EntityCulling",
         version: "1.7.2",
         category: VoltModCategory::Performance,
-        default_on: true,
+        default_on: false,
         summary: "Skips rendering mobs & block-entities hidden behind walls.",
         description: "Performs fast 3D visibility & depth occlusion checks to skip building vertices for entities and block-entities occluded by solid cave walls or terrain.",
     },
@@ -630,7 +635,7 @@ pub const CATALOG: [VoltModMeta; TOTAL_VOLT_MODS] = [
         title: "MoreCulling",
         version: "1.2.6",
         category: VoltModCategory::Performance,
-        default_on: true,
+        default_on: false,
         summary: "Dense leaf-shell culling, item-frame LOD & unseen face stripping.",
         description: "Strips unseen interior foliage faces, culls back-facing signs and distant item frames, and tightens block-entity draw radii in dense forests and bases.",
     },
@@ -640,7 +645,7 @@ pub const CATALOG: [VoltModMeta; TOTAL_VOLT_MODS] = [
         title: "Dynamic FPS",
         version: "3.7.7",
         category: VoltModCategory::Performance,
-        default_on: true,
+        default_on: false,
         summary: "Auto-throttles FPS when idle, unfocused, or backgrounded.",
         description: "Automatically lowers frame pacing when the window/app is unfocused or untouched on static menus, saving mobile battery and keeping Helio/Mali thermals cool.",
     },
@@ -650,7 +655,7 @@ pub const CATALOG: [VoltModMeta; TOTAL_VOLT_MODS] = [
         title: "ModernFix",
         version: "5.20.2",
         category: VoltModCategory::Performance,
-        default_on: true,
+        default_on: false,
         summary: "Streaming mip-major startup & non-blocking pack reload.",
         description: "Eliminates startup and world-entry stalls by streaming atlas mipmaps row-by-row, preparing animations off-thread, and freeing staging pixels immediately.",
     },
@@ -660,7 +665,7 @@ pub const CATALOG: [VoltModMeta; TOTAL_VOLT_MODS] = [
         title: "BadOptimizations",
         version: "2.2.1",
         category: VoltModCategory::Performance,
-        default_on: true,
+        default_on: false,
         summary: "Caches sky colors, lightmap uniforms & unchanged HUD strings.",
         description: "Avoids recomputing sky/fog gradients, lightmap tables, and formatted HUD strings on frames where world time, biome, and camera state have not changed.",
     },
@@ -670,7 +675,7 @@ pub const CATALOG: [VoltModMeta; TOTAL_VOLT_MODS] = [
         title: "Krypton",
         version: "0.2.8",
         category: VoltModCategory::Performance,
-        default_on: true,
+        default_on: false,
         summary: "Optimized network packet framing, compression & socket buffers.",
         description: "Reduces multiplayer CPU overhead and packet jitter via pre-sized network decode scratch buffers and streamlined chunk/entity packet batching.",
     },
@@ -731,7 +736,7 @@ pub const CATALOG: [VoltModMeta; TOTAL_VOLT_MODS] = [
         title: "Language Reload",
         version: "1.7.2",
         category: VoltModCategory::Additional,
-        default_on: true,
+        default_on: false,
         summary: "Instant zero-freeze language switching without atlas reload.",
         description: "Switches client languages instantaneously without rebuilding block/entity GPU texture atlases and supports quick language cycling via F3+J.",
     },
@@ -741,9 +746,29 @@ pub const CATALOG: [VoltModMeta; TOTAL_VOLT_MODS] = [
         title: "FastQuit",
         version: "3.0.0",
         category: VoltModCategory::Additional,
-        default_on: true,
+        default_on: false,
         summary: "Returns to Title Screen instantly while saving in background.",
         description: "Lets singleplayer worlds return to the Title Screen immediately upon clicking Save and Quit while world region serialization finishes safely in the background.",
+    },
+    VoltModMeta {
+        id: VoltModId::MotionBlur,
+        slug: "motion_blur",
+        title: "Motion Blur",
+        version: "1.0.0",
+        category: VoltModCategory::Visual,
+        default_on: false,
+        summary: "Velocity-based camera smear that sells fast movement.",
+        description: "Blends successive frames along the direction the camera just turned, so fast whips and sprint-strafes read as motion instead of a hard cut. Strength scales with turn speed, so standing still stays perfectly sharp.",
+    },
+    VoltModMeta {
+        id: VoltModId::HitReg,
+        slug: "hitreg",
+        title: "HitReg",
+        version: "1.0.0",
+        category: VoltModCategory::PvpUtility,
+        default_on: false,
+        summary: "Hit-marker flash, sound and click-to-hit timing readout.",
+        description: "Confirms each successful attack with a crosshair hit-marker, a short tick and an on-screen millisecond readout of how long the hit took to register, so you can see exactly how your connection is behaving.",
     },
 ];
 
@@ -1477,6 +1502,36 @@ pub const fn mod_logo_spec(id: VoltModId) -> ModLogoSpec {
                 ".#.##+++",
                 "..##++++",
                 ".....++.",
+            ],
+        },
+        VoltModId::MotionBlur => ModLogoSpec {
+            bg: 0x1b2430,
+            primary: 0x7dd3fc,
+            accent: 0xe0f2fe,
+            rows: [
+                "..####..",
+                ".######.",
+                "##.##.##",
+                "#..##..#",
+                "##.##.##",
+                ".######.",
+                "..####..",
+                "........",
+            ],
+        },
+        VoltModId::HitReg => ModLogoSpec {
+            bg: 0x2a1414,
+            primary: 0xf87171,
+            accent: 0xfde047,
+            rows: [
+                "#......#",
+                ".+#..+#.",
+                "..+##+..",
+                "...++...",
+                "..+##+..",
+                ".+#..+#.",
+                "#......#",
+                "........",
             ],
         },
         VoltModId::FastQuit => ModLogoSpec {
@@ -3112,6 +3167,40 @@ impl ModMenuUi {
 mod tests {
     use super::*;
 
+    /// The catalog is indexed by `VoltModId as usize`, so a variant out of
+    /// step with its entry would silently show the wrong mod's name.
+    #[test]
+    fn every_mod_id_matches_its_catalog_entry() {
+        assert_eq!(CATALOG.len(), TOTAL_VOLT_MODS);
+        assert_eq!(VoltModId::ALL.len(), TOTAL_VOLT_MODS);
+        for (i, id) in VoltModId::ALL.iter().enumerate() {
+            assert_eq!(id.index(), i, "{id:?} is out of order");
+            assert_eq!(CATALOG[i].id, *id, "{id:?} names the wrong entry");
+        }
+    }
+
+    /// Slugs are the persistence key: a duplicate would make two mods share
+    /// one saved switch.
+    #[test]
+    fn mod_slugs_are_unique_and_resolve() {
+        let mut seen = std::collections::BTreeSet::new();
+        for id in VoltModId::ALL {
+            let slug = id.meta().slug;
+            assert!(seen.insert(slug), "duplicate slug {slug}");
+            assert_eq!(VoltModId::from_slug(slug), Some(id));
+        }
+    }
+
+    /// The two visual-feel mods ship off, like every other mod.
+    #[test]
+    fn motion_blur_and_hitreg_default_off() {
+        for id in [VoltModId::MotionBlur, VoltModId::HitReg] {
+            assert!(!id.meta().default_on, "{:?} must default off", id);
+            let state = VoltModCatalogState::default();
+            assert!(!state.is_on(id), "{:?} must start off", id);
+        }
+    }
+
     #[test]
     fn verified_upstream_icons_decode_and_are_available_in_full_atlas() {
         let atlas = HudAtlas::build(std::path::Path::new("/nonexistent/volt-mod-icons-test")).unwrap();
@@ -3235,17 +3324,18 @@ mod tests {
     }
 
     #[test]
-    fn all_forty_nine_mods_have_exact_category_counts_unique_slugs_and_logos() {
-        assert_eq!(VoltModId::ALL.len(), 49);
+    fn all_fifty_one_mods_have_exact_category_counts_unique_slugs_and_logos() {
+        assert_eq!(VoltModId::ALL.len(), 51);
         let count_cat = |c: VoltModCategory| {
             VoltModId::ALL
                 .iter()
                 .filter(|id| id.meta().category == c)
                 .count()
         };
-        assert_eq!(count_cat(VoltModCategory::PvpUtility), 12);
+        // HitReg joins PvP & Utility, Motion Blur joins Visual.
+        assert_eq!(count_cat(VoltModCategory::PvpUtility), 13);
         assert_eq!(count_cat(VoltModCategory::PvpHud), 11);
-        assert_eq!(count_cat(VoltModCategory::Visual), 9);
+        assert_eq!(count_cat(VoltModCategory::Visual), 10);
         assert_eq!(count_cat(VoltModCategory::Performance), 10);
         assert_eq!(count_cat(VoltModCategory::Additional), 7);
 
@@ -3297,9 +3387,12 @@ mod tests {
     #[test]
     fn mod_catalog_round_trips_and_syncs_with_engine() {
         let mut s = Settings::default();
-        assert!(s.extras.mod_catalog.is_on(VoltModId::Sodium));
-        assert!(s.extras.mod_catalog.is_on(VoltModId::ModMenu));
+        // A fresh install has every mod off, performance ones included.
+        assert!(!s.extras.mod_catalog.is_on(VoltModId::Sodium));
+        assert!(!s.extras.mod_catalog.is_on(VoltModId::ModMenu));
         assert!(!s.extras.mod_catalog.is_on(VoltModId::Fullbright));
+        apply_mod_to_engine(VoltModId::Sodium, true, &mut s.extras, &mut s.horizon);
+        assert!(s.extras.mod_catalog.is_on(VoltModId::Sodium));
 
         apply_mod_to_engine(VoltModId::Fullbright, true, &mut s.extras, &mut s.horizon);
         apply_mod_to_engine(

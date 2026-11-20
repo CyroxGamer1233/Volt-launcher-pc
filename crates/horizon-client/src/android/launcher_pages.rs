@@ -157,6 +157,16 @@ fn draw_photo_thumb(
     }
 }
 
+/// The Mouse page's editable values.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum MouseField {
+    Scale,
+    Opacity,
+    Accuracy,
+    Sensitivity,
+    ButtonScale,
+    Style,
+}
 #[derive(Clone, Copy, PartialEq)]
 pub(crate) enum Action {
     HomeTab(HomeTab),
@@ -254,6 +264,8 @@ pub(crate) enum Action {
     ChooseAspect(crate::display::Aspect),
     DisplayHz,
     ChooseDisplayHz(u16),
+    /// Ask the window for the display's highest refresh mode.
+    MaxRefresh,
     PerformanceHints,
     GpuProfile,
     ImportControl,
@@ -262,6 +274,8 @@ pub(crate) enum Action {
     DeleteControlPreset(usize),
     ApplyControlsAllProfiles,
     ResetControls,
+    /// Nudge one Mouse-page value by one step (negative goes down).
+    MouseStep(MouseField, i8),
     ImportVulkanDriver,
     ResetVulkanDriver,
     InstallUpdate,
@@ -275,6 +289,9 @@ pub(crate) enum Action {
     /// Turn `bundled_native::WOVEN[i]` on or off for the active profile
     /// (`mod.<id>:false` in `horizon-mods.txt`; the code ships in the APK).
     ToggleWoven(usize),
+    /// Turn one built-in Volt engine mod on or off: stored in the profile's
+    /// `settings.extras.mod_catalog`, which the game reads at launch.
+    ToggleVoltMod(horizon_client::volt_mods::VoltModId),
     /// Turn every toggleable mod on (Mods tab).
     ModsAllOn,
     /// Turn every toggleable mod off (Mods tab).
@@ -334,6 +351,7 @@ fn toggle_key(action: Action) -> u32 {
         Action::Immersive => 1,
         Action::Cutout => 2,
         Action::PerformanceHints => 3,
+        Action::MaxRefresh => 8,
         Action::GpuProfile => 4,
         Action::RecordPerformance => 5,
         Action::ToggleServerSkinSync => 6,
@@ -621,6 +639,12 @@ fn draw_page_icon(ui: &mut Ui, page: Page, cx: f32, cy: f32, col: u32) {
             ui.rounded(cx - 4.75, cy - 2.75, 2.0, 5.5, 1.0, col);
             ui.rounded(cx + 2.0, cy - 2.75, 2.2, 2.2, 1.1, col);
             ui.rounded(cx + 4.5, cy + 0.55, 2.2, 2.2, 1.1, col);
+        }
+        Page::Mouse => {
+            // Rounded pointer body with a cable, so the Mouse tab reads at 10pt.
+            ui.border(cx - 5.0, cy - 8.0, 10.0, 15.0, 5.0, col);
+            ui.rounded(cx - 0.75, cy - 7.0, 1.5, 5.0, 0.75, col);
+            ui.rounded(cx - 1.0, cy - 10.5, 2.0, 3.0, 1.0, col);
         }
         Page::Installed => {
             ui.rounded(cx - 1.0, cy - 7.5, 2.0, 9.0, 1.0, col);
@@ -1232,9 +1256,9 @@ impl DrawCtx<'_> {
         let bar_h = 62.0;
         let by = h - bar_h - 12.0;
         // Account chip, clamped so it can never run under the centred dock
-        // (six items now: Packs and Shaders download pages joined it).
+        // (eight items now: Mouse joined after Controls).
         let dock_item = if w >= 1100.0 { 88.0 } else { 76.0 };
-        let dock_left = (w - (dock_item * 7.0 + 20.0)) * 0.5;
+        let dock_left = (w - (dock_item * 8.0 + 20.0)) * 0.5;
         let chip_w = 200.0_f32.min(w * 0.26).min(dock_left - 26.0).max(120.0);
         let chip = [6.0, by, chip_w, bar_h];
         ui.rounded(chip[0], chip[1], chip[2], chip[3], bar_h * 0.5, theme::GLASS());
@@ -1256,17 +1280,18 @@ impl DrawCtx<'_> {
         self.targets.push((chip, Action::Page(Page::Account)));
         // Centred dock, now with direct Packs and Shaders download pages.
         let item_w = dock_item;
-        let dock_w = item_w * 7.0 + 20.0;
+        let dock_w = item_w * 8.0 + 20.0;
         let dock = [(w - dock_w) * 0.5, by, dock_w, bar_h];
         ui.rounded(dock[0], dock[1], dock[2], dock[3], bar_h * 0.5, theme::GLASS());
         ui.border(dock[0], dock[1], dock[2], dock[3], bar_h * 0.5, theme::GLASS_BORDER());
-        let items: [(&str, Page, Action); 7] = [
+        let items: [(&str, Page, Action); 8] = [
             ("Home", Page::Play, Action::Page(Page::Play)),
             ("Instances", Page::Installed, Action::Profile),
             ("Browse", Page::Mods, Action::Page(Page::Mods)),
             ("Packs", Page::Packs, Action::Page(Page::Packs)),
             ("Shaders", Page::Shaders, Action::Page(Page::Shaders)),
             ("Controls", Page::Controls, Action::Page(Page::Controls)),
+            ("Mouse", Page::Mouse, Action::Page(Page::Mouse)),
             ("Settings", Page::Settings, Action::Page(Page::Settings)),
         ];
         for (i, (label, icon, action)) in items.iter().enumerate() {
@@ -1278,6 +1303,7 @@ impl DrawCtx<'_> {
                 3 => self.catalog.page == Page::Packs,
                 4 => self.catalog.page == Page::Shaders,
                 5 => self.catalog.page == Page::Controls,
+                6 => self.catalog.page == Page::Mouse,
                 _ => matches!(self.catalog.page, Page::Settings | Page::VoltSettings),
             };
             if active {
@@ -1760,12 +1786,32 @@ impl DrawCtx<'_> {
             self.targets.insert(0, (slab, Action::Play));
         }
 
-        // Error line floating above the pill.
+        // Error banner floating above the pill. A download failure writes a full
+        // sentence, and fitting that to one line shrank it to an ellipsis
+        // nobody could read - so wrap it onto a card.
         if !installing && let Some(error) = self.error.as_deref() {
-            let e = ui.fit_text(Face::LauncherRegular, 11.5, error, w - 2.0 * m - 40.0);
-            let ew = ui.measure(Face::LauncherRegular, 11.5, &e);
-            ui.text(Face::LauncherRegular, 11.5, ax + (w - ew) * 0.5, py0 - 20.0,
-                theme::STATUS_BAD(), &e);
+            // One width drives both: wrap to the card's inner width so the
+            // centring below is exact rather than a few pixels off.
+            let pad = 9.0;
+            let box_w = (w - 2.0 * m - 24.0).max(120.0);
+            let lines = wrap_lines(ui, Face::LauncherRegular, 11.5, error, box_w - pad * 2.0, 6);
+            let line_h = 15.0;
+            let box_h = pad * 2.0 + lines.len() as f32 * line_h;
+            let box_x = ax + m;
+            let box_y = py0 - 14.0 - box_h;
+            ui.rounded(box_x, box_y, box_w, box_h, 10.0, theme::GLASS());
+            ui.border(box_x, box_y, box_w, box_h, 10.0, hex(0xffffff, 26));
+            for (i, line) in lines.iter().enumerate() {
+                let lw = ui.measure(Face::LauncherRegular, 11.5, line);
+                ui.text(
+                    Face::LauncherRegular,
+                    11.5,
+                    box_x + (box_w - lw) * 0.5,
+                    box_y + pad + i as f32 * line_h,
+                    theme::STATUS_BAD(),
+                    line,
+                );
+            }
         }
 
         // ---- Quiet utility chips: a spaced row along the bottom, between
@@ -3378,6 +3424,9 @@ impl DrawCtx<'_> {
             Replay,
             Bundled(usize),
             Woven(usize),
+            /// One of the built-in Volt engine mods: always present, switched
+            /// from this list and stored in `settings.extras.mod_catalog`.
+            Volt(horizon_client::volt_mods::VoltModId),
         }
         let bundled = horizon_client::bundled_native::BUNDLED;
         let woven = horizon_client::bundled_native::WOVEN;
@@ -3408,6 +3457,16 @@ impl DrawCtx<'_> {
             if hit(title, bundled_mod_blurb(id)) {
                 let on = !self.catalog.bundled_disabled.contains(id);
                 rows.push((Kind::Woven(i), on, title.to_owned()));
+            }
+        }
+        // The built-in Volt engine mods (Motion Blur, HitReg, ...) live here
+        // too: they are compiled into the game, so the launcher can switch
+        // them without installing anything.
+        for id in horizon_client::volt_mods::VoltModId::ALL {
+            let meta = id.meta();
+            if hit(meta.title, meta.summary) {
+                let on = self.catalog.extras.mod_catalog.is_on(id);
+                rows.push((Kind::Volt(id), on, meta.title.to_owned()));
             }
         }
         match self.catalog.mods_sort {
@@ -3561,6 +3620,38 @@ impl DrawCtx<'_> {
                             button,
                             if enabled { "Turn off" } else { "Turn on" },
                             Action::ToggleWoven(i),
+                            if enabled { BtnStyle::Secondary } else { BtnStyle::Primary },
+                            true,
+                        );
+                        if let Some(clipped) = super::gesture::clip_target_y(button, top, bottom) {
+                            self.targets[first].0 = clipped;
+                        } else {
+                            self.targets.truncate(first);
+                        }
+                    }
+                }
+                Kind::Volt(id) => {
+                    let meta = id.meta();
+                    let initial: String = meta.title.chars().take(1).collect();
+                    draw_centered_text(ui, Face::LauncherMedium, 18.0, icon, theme::CRIMSON(), &initial);
+                    let title = format!("{} {}", meta.title, meta.version);
+                    let title = ui.fit_text(Face::LauncherMedium, 14.0, &title, text_w);
+                    ui.text(Face::LauncherMedium, 14.0, tx, ry + 10.0, theme::TEXT(), &title);
+                    let state = if enabled { "On in game" } else { "Off in game" };
+                    let line = format!("Volt mod · {} · {state}", meta.category.label());
+                    let line = ui.fit_text(Face::LauncherRegular, 11.0, &line, text_w);
+                    ui.text(Face::LauncherRegular, 11.0, tx, ry + 31.0, theme::DIM(), &line);
+                    let blurb = ui.fit_text(Face::LauncherRegular, 11.0, meta.summary, text_w);
+                    ui.text(Face::LauncherRegular, 11.0, tx, ry + 46.0, theme::MUTED(), &blurb);
+                    if !self.catalog.busy() {
+                        let button = [cx + cw - 108.0, ry + 17.0, 98.0, 30.0];
+                        let first = self.targets.len();
+                        styled_button(
+                            ui,
+                            self.targets,
+                            button,
+                            if enabled { "Turn off" } else { "Turn on" },
+                            Action::ToggleVoltMod(id),
                             if enabled { BtnStyle::Secondary } else { BtnStyle::Primary },
                             true,
                         );
@@ -3921,6 +4012,128 @@ impl DrawCtx<'_> {
         }
     }
 
+    /// The Mouse tab: on-screen pointer size, opacity, fine aim, speed,
+    /// button scale and crosshair style. It edits the same values the in-game
+    /// Mouse Settings page does, straight from the dashboard, and writes them
+    /// back to the profile's `horizon-touch.json` so the next launch uses
+    /// them.
+    fn draw_mouse_page(&mut self, ui: &mut Ui, area: [f32; 4], compact: bool) {
+        let [cx, cy, cw, ch] = area;
+        let pad_x = if compact { 10.0 } else { 16.0 };
+        let row_h = 46.0;
+        // This page does not scroll; drop any capture the last page left so
+        // the +/- buttons get their taps.
+        *self.list_view = None;
+
+        // Load once per frame; every edit is written straight back.
+        let profile_home = self.catalog.config.game_home(&self.home);
+        let path = profile_home.join("horizon-touch.json");
+        let mut settings = horizon_client::touch::layout::Settings::load_from(&path);
+
+        ui.rounded(cx, cy, cw, 78.0, 12.0, theme::CARD());
+        ui.border(cx, cy, cw, 78.0, 12.0, theme::BORDER());
+        ui.text(Face::LauncherMedium, 18.0, cx + pad_x, cy + 10.0, theme::TEXT(), "Mouse");
+        let hint = ui.fit_text(
+            Face::LauncherRegular,
+            12.0,
+            "On-screen pointer: size, opacity, fine aim and speed.",
+            cw - pad_x * 2.0,
+        );
+        ui.text(Face::LauncherRegular, 12.0, cx + pad_x, cy + 32.0, theme::MUTED(), &hint);
+        let back = [cx + pad_x, cy + 52.0, 96.0, 20.0];
+        self.list_targets.push((back, Action::Page(Page::Controls)));
+        styled_button(
+            ui,
+            self.targets,
+            back,
+            "Controls",
+            Action::Page(Page::Controls),
+            BtnStyle::Secondary,
+            true,
+        );
+
+        let mut y = cy + 88.0;
+        // (label, value text, action to step down, action to step up)
+        let rows: [(&str, String, Action, Action); 6] = [
+            (
+                "Cursor size",
+                format!("{:.0}%", settings.pointer_scale * 100.0),
+                Action::MouseStep(MouseField::Scale, -1),
+                Action::MouseStep(MouseField::Scale, 1),
+            ),
+            (
+                "Cursor opacity",
+                format!("{:.0}%", settings.pointer_opacity * 100.0),
+                Action::MouseStep(MouseField::Opacity, -1),
+                Action::MouseStep(MouseField::Opacity, 1),
+            ),
+            (
+                "Fine aim",
+                format!("{:.0}%", settings.pointer_accuracy * 100.0),
+                Action::MouseStep(MouseField::Accuracy, -1),
+                Action::MouseStep(MouseField::Accuracy, 1),
+            ),
+            (
+                "Sensitivity",
+                format!("{:.0}%", settings.virtual_mouse_sensitivity * 100.0),
+                Action::MouseStep(MouseField::Sensitivity, -1),
+                Action::MouseStep(MouseField::Sensitivity, 1),
+            ),
+            (
+                "Button scale",
+                format!("{:.0}%", settings.button_scale * 100.0),
+                Action::MouseStep(MouseField::ButtonScale, -1),
+                Action::MouseStep(MouseField::ButtonScale, 1),
+            ),
+            (
+                "Crosshair style",
+                match settings.pointer_style {
+                    0 => "Ring".to_owned(),
+                    1 => "Dot".to_owned(),
+                    2 => "Cross".to_owned(),
+                    _ => "None".to_owned(),
+                },
+                Action::MouseStep(MouseField::Style, -1),
+                Action::MouseStep(MouseField::Style, 1),
+            ),
+        ];
+        for (label, value, dec, inc) in rows.iter() {
+            if y + row_h > cy + ch {
+                break;
+            }
+            let rr = [cx, y, cw, row_h - 8.0];
+            ui.rounded(rr[0], rr[1], rr[2], rr[3], 10.0, theme::CARD());
+            ui.border(rr[0], rr[1], rr[2], rr[3], 10.0, theme::BORDER());
+            let lab = ui.fit_text(Face::LauncherMedium, 13.5, label, cw - 190.0);
+            ui.text(
+                Face::LauncherMedium,
+                13.5,
+                rr[0] + pad_x,
+                rr[1] + 6.0,
+                theme::TEXT(),
+                &lab,
+            );
+            let val_w = 68.0;
+            let val_x = rr[0] + rr[2] - pad_x - 24.0 * 2.0 - val_w - 8.0;
+            let vfit = ui.fit_text(Face::LauncherRegular, 13.0, value, val_w);
+            ui.text(
+                Face::LauncherRegular,
+                13.0,
+                val_x,
+                rr[1] + 6.0,
+                theme::CRIMSON_BRIGHT(),
+                &vfit,
+            );
+            let minus = [val_x + val_w + 4.0, rr[1] + 3.0, 22.0, 22.0];
+            let plus = [minus[0] + 26.0, rr[1] + 3.0, 22.0, 22.0];
+            self.list_targets.push((minus, *dec));
+            styled_button(ui, self.targets, minus, "-", *dec, BtnStyle::Secondary, true);
+            self.list_targets.push((plus, *inc));
+            styled_button(ui, self.targets, plus, "+", *inc, BtnStyle::Secondary, true);
+            y += row_h;
+        }
+    }
+
     /// The dedicated Controls tab: import touch layouts, manage saved
     /// presets by name, open the Pojav-parity visual editor and toggle the
     /// dashboard preview. The whole page scrolls as one column.
@@ -4115,7 +4328,7 @@ impl DrawCtx<'_> {
             _ => "Built-in Supporter".to_owned(),
         };
 
-        let left_items: [(&str, String, Action, Option<bool>, bool); 12] = [
+        let left_items: [(&str, String, Action, Option<bool>, bool); 14] = [
             ("Theme", if c.launcher_liquid { "Liquid Glass" } else { "Classic" }.to_owned(), Action::ToggleLiquid, None, false),
             ("Appearance", if c.launcher_dark { "Dark" } else { "Light" }.to_owned(), Action::ToggleAppearance, None, false),
             ("Accent color", format!("#{:06X}", c.launcher_accent), Action::CycleAccent, None, false),
@@ -4174,6 +4387,20 @@ impl DrawCtx<'_> {
                 Action::DisplayHz,
                 None,
                 true,
+            ),
+            (
+                "Request max refresh rate",
+                String::new(),
+                Action::MaxRefresh,
+                Some(c.device.max_refresh),
+                false,
+            ),
+            (
+                "::caption",
+                String::new(),
+                Action::MaxRefresh,
+                None,
+                false,
             ),
             (
                 "Performance hints",
@@ -4460,6 +4687,30 @@ impl DrawCtx<'_> {
                     let y = list_top + i as f32 * row_h - self.catalog.scroll;
                     let ctrl_w = (col_w * 0.50).clamp(132.0, 236.0);
                     let ctrl_rect = [base_x + col_w - ctrl_w - 16.0, y + 5.0, ctrl_w, 34.0];
+                    // "::" rows are the live caption under a switch: text only,
+                    // no control and no tap target of their own.
+                    if label.starts_with("::") {
+                        if y >= list_top - 4.0 && y + row_h - 4.0 <= list_bottom {
+                            let caption = crate::device_preferences::Settings::refresh_caption(
+                                crate::platform::display_refresh_cached(),
+                            );
+                            let fit = ui.fit_text(
+                                Face::LauncherRegular,
+                                11.5,
+                                &caption,
+                                col_w - 40.0,
+                            );
+                            ui.text(
+                                Face::LauncherRegular,
+                                11.5,
+                                base_x + 20.0,
+                                y + 12.0,
+                                theme::MUTED(),
+                                &fit,
+                            );
+                        }
+                        continue;
+                    }
                     self.list_targets.push((ctrl_rect, *act));
                     if y < list_top - 4.0 || y + row_h - 4.0 > list_bottom {
                         continue;
@@ -4666,6 +4917,16 @@ impl DrawCtx<'_> {
             for (i, (label, val, act, sw, dropdown)) in all_items.iter().enumerate() {
                 let y = top + import_block_h + i as f32 * row_h - self.catalog.scroll;
                 let ctrl_rect = [cx, y + 24.0, cw, 38.0];
+                if label.starts_with("::") {
+                    if y >= top && y + row_h - 4.0 <= bottom {
+                        let caption = crate::device_preferences::Settings::refresh_caption(
+                            crate::platform::display_refresh_cached(),
+                        );
+                        let fit = ui.fit_text(Face::LauncherRegular, 11.5, &caption, cw - 4.0);
+                        ui.text(Face::LauncherRegular, 11.5, cx + 2.0, y + 10.0, theme::MUTED(), &fit);
+                    }
+                    continue;
+                }
                 self.list_targets.push((ctrl_rect, *act));
                 if y < top || y + row_h - 4.0 > bottom {
                     continue;
@@ -4752,13 +5013,6 @@ impl DrawCtx<'_> {
                 Action::RenderScale,
                 None,
                 true,
-            ),
-            (
-                "Auto-DRS dynamic scale",
-                Item::VoltAutoDrs.value(ex),
-                Action::VoltExtra(Item::VoltAutoDrs),
-                None,
-                false,
             ),
             (
                 "Display refresh rate",
@@ -6320,6 +6574,7 @@ impl Launcher {
                 }
                 Page::VoltSettings => ctx.draw_volt_settings_page(&mut ui, content_area, compact),
                 Page::Controls => ctx.draw_controls_page(&mut ui, content_area, compact),
+                Page::Mouse => ctx.draw_mouse_page(&mut ui, content_area, compact),
                 Page::Settings => {
                     ctx.draw_settings_page(&mut ui, content_area, compact, &account_status)
                 }
@@ -6675,6 +6930,24 @@ impl Launcher {
                 self.chooser = None;
             }
             Some(Action::DisplayHz) => self.open_chooser(chooser::Kind::DisplayHz),
+            Some(Action::MaxRefresh) => {
+                let device = &mut self.catalog.config.device;
+                device.max_refresh ^= true;
+                if device.max_refresh {
+                    // The switch is the request, so an explicit rate that is
+                    // lower than the panel must not keep it there.
+                    device.display_hz = 0;
+                }
+                let on = device.max_refresh;
+                self.catalog.status = if on {
+                    "Requesting the screen's highest refresh rate. Some games still pace frames to the display's mode."
+                } else {
+                    "Back to the system's default refresh rate."
+                }
+                .into();
+                self.catalog.config.save(&self.home)?;
+                crate::device_runtime::configure(self.catalog.config.device);
+            }
             Some(Action::ChooseDisplayHz(hz)) => {
                 self.catalog.config.device.display_hz = hz;
                 self.catalog.config.device.sanitize();
@@ -6876,6 +7149,41 @@ impl Launcher {
                         );
                     }
                     Err(e) => self.catalog.status = format!("Apply failed: {e}"),
+                }
+            }
+            Some(Action::MouseStep(field, dir)) => {
+                self.chooser = None;
+                let profile_home = self.catalog.config.game_home(&self.home);
+                let path = profile_home.join("horizon-touch.json");
+                let mut s = horizon_client::touch::layout::Settings::load_from(&path);
+                let d = f32::from(dir);
+                match field {
+                    MouseField::Scale => {
+                        s.pointer_scale = (s.pointer_scale + d * 0.1).clamp(0.5, 2.5)
+                    }
+                    MouseField::Opacity => {
+                        s.pointer_opacity = (s.pointer_opacity + d * 0.05).clamp(0.15, 1.0)
+                    }
+                    MouseField::Accuracy => {
+                        s.pointer_accuracy = (s.pointer_accuracy + d * 0.05).clamp(0.2, 1.0)
+                    }
+                    MouseField::Sensitivity => {
+                        s.virtual_mouse_sensitivity =
+                            (s.virtual_mouse_sensitivity + d * 0.05).clamp(0.1, 2.0)
+                    }
+                    MouseField::ButtonScale => {
+                        s.button_scale = (s.button_scale + d * 0.05).clamp(0.5, 2.0)
+                    }
+                    MouseField::Style => {
+                        let next = (i16::from(s.pointer_style) + i16::from(dir)).rem_euclid(4);
+                        s.pointer_style = next as u8;
+                    }
+                }
+                match horizon_client::touch::import::apply_to_profile(&profile_home, &s) {
+                    Ok(()) => {
+                        self.catalog.status = "Mouse setting saved.".to_owned();
+                    }
+                    Err(e) => self.catalog.status = format!("Save failed: {e}"),
                 }
             }
             Some(Action::ResetControls) => {
@@ -7404,20 +7712,18 @@ impl Launcher {
                     "Switched back to Volt's built-in Vulkan Supporter driver.".into();
             }
             Some(Action::InstallUpdate) => {
-                // The download runs in the user's browser on purpose: Volt never
-                // asks for REQUEST_INSTALL_PACKAGES or drives PackageInstaller,
-                // so Play Protect has no "can install other apps" signal to warn
-                // about when players sideload the launcher.
+                // In the app: fetch the matched APK, then hand it to Android's
+                // installer. The player confirms once, in the system dialog.
                 if let Some(prompt) = self.update_prompt.take() {
                     crate::volt_updater::mark_update_seen(&self.home, &prompt.info.tag_name);
-                    self.catalog.status = if crate::platform::open_url(&prompt.info.download_url) {
-                        format!(
-                            "Downloading {} ({}) in your browser — open the APK when it finishes to update.",
-                            prompt.info.display_version, prompt.info.abi_label
-                        )
-                    } else {
-                        "Could not open a browser for the update download.".into()
-                    };
+                    self.catalog.status = format!(
+                        "Downloading {} ({})...",
+                        prompt.info.display_version, prompt.info.abi_label
+                    );
+                    self.update_download = Some(crate::volt_updater::spawn_download(
+                        self.home.clone(),
+                        prompt.info,
+                    ));
                 }
             }
             Some(Action::CancelUpdate) => {
@@ -7638,6 +7944,21 @@ impl Launcher {
                         )
                     };
                 }
+            }
+            Some(Action::ToggleVoltMod(id)) => {
+                let game_dir = self.catalog.config.game_home(&self.home);
+                let _ = std::fs::create_dir_all(&game_dir);
+                let was_on = self.catalog.extras.mod_catalog.is_on(id);
+                self.catalog.extras.mod_catalog.set(id, !was_on);
+                self.catalog.extras.save(&game_dir);
+                crate::documents::note_mods_changed(&game_dir);
+                let meta = id.meta();
+                self.catalog.status = format!(
+                    "{} {} is {} for this profile.",
+                    meta.title,
+                    meta.version,
+                    if was_on { "off" } else { "on" }
+                );
             }
             Some(Action::ModsAllOn) | Some(Action::ModsAllOff) => {
                 let on = action == Some(Action::ModsAllOn);
@@ -8127,7 +8448,7 @@ fn draw_update_prompt(
         ui,
         targets,
         [install_x, footer_y + 4.0, btn_w, 38.0],
-        "Download",
+        "Install now",
         Action::InstallUpdate,
         BtnStyle::Primary,
         true,
@@ -8217,9 +8538,8 @@ fn draw_volt_boost_modal(
         );
     }
 
-    let items: [Item; 31] = [
+    let items: [Item; 30] = [
         Item::VoltPerfHud,
-        Item::VoltAutoDrs,
         Item::VoltCullLeaves,
         Item::VoltFrustumMesh,
         Item::VoltLookaheadStream,

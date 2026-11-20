@@ -274,6 +274,33 @@ pub fn clipboard_get() -> Option<String> {
     })
 }
 
+/// The display's highest offered refresh rate and the one it is using now
+/// (`Display.getSupportedModes`), "max:current" from `HorizonActivity`.
+pub fn display_refresh() -> Option<(f32, f32)> {
+    let text: String = with_context(|env, activity| {
+        let value = env
+            .call_method(activity, "displayRefresh", "()Ljava/lang/String;", &[])?
+            .l()?;
+        if value.is_null() {
+            return Ok(String::new());
+        }
+        let value = jni::objects::JString::from(value);
+        let text: String = env.get_string(&value)?.into();
+        Ok(text)
+    })?;
+    let (max, current) = text.split_once(':')?;
+    let max: f32 = max.trim().parse().ok()?;
+    let current: f32 = current.trim().parse().ok()?;
+    (max > 0.0).then_some((max, current))
+}
+
+/// [`display_refresh`] for UI captions: the modes only change on a new
+/// display, so asking once per session is enough.
+pub fn display_refresh_cached() -> Option<(f32, f32)> {
+    static ONCE: std::sync::OnceLock<Option<(f32, f32)>> = std::sync::OnceLock::new();
+    *ONCE.get_or_init(display_refresh)
+}
+
 pub fn set_orientation(orientation: crate::catalog::Orientation) {
     with_context(|env, activity| {
         env.call_method(
@@ -391,6 +418,36 @@ pub fn open_url(url: &str) -> bool {
     })
     .is_some()
 }
+/// Hands a downloaded APK to the system installer (`PackageInstaller`). The
+/// player still confirms the install in Android's own dialog; this only saves
+/// the trip through a browser and the downloads folder.
+pub fn install_apk(path: &str) -> bool {
+    with_context(|env, activity| {
+        let value = JObject::from(env.new_string(path)?);
+        let ok = env
+            .call_method(
+                activity,
+                "installApk",
+                "(Ljava/lang/String;)Z",
+                &[JValue::Object(&value)],
+            )?
+            .z()?;
+        Ok(ok)
+    })
+    .unwrap_or(false)
+}
+
+/// Brings the launcher back to the front (after signing in through the
+/// browser, the player should land on the filled-in account, not hunt for the
+/// app in Recents).
+pub fn bring_to_front() -> bool {
+    with_context(|env, activity| {
+        env.call_method(activity, "bringToFront", "()V", &[])?;
+        Ok(true)
+    })
+    .unwrap_or(false)
+}
+
 /// Public Android power/thermal status; no device identifiers or sysfs access.
 pub fn performance_power() -> serde_json::Value {
     with_context(|env, activity| {

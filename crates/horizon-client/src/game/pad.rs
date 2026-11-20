@@ -38,7 +38,9 @@ pub(super) struct Pads {
     /// Keep a released tap's ray until the tick consumed its queued click.
     #[cfg(target_os = "android")]
     pub(super) touch_aim: Option<[f32; 2]>,
-    #[cfg(target_os = "android")]
+    // Present on every platform: the pause menu draws its corner through it
+    // and the method is a no-op off Android. Keeping it unconditional avoids
+    // a cfg inside the weaver's `draw_pause_menu` target.
     pub(super) touch_ui: horizon_client::touch_ui::TouchUi,
     /// The real controllers and the DualSense's output.
     #[cfg(all(feature = "controllers", not(target_os = "android")))]
@@ -142,7 +144,10 @@ impl Game<'_> {
     /// else; the open hub window and the editors keep the screen clean.
     #[cfg(target_os = "android")]
     pub(super) fn android_title_controls(&self) -> bool {
-        self.title.is_some()
+        // The title screen, and the in-world pause menu: both put a menu over
+        // the world, and leaving the movement overlay drawn underneath covers
+        // the very buttons the menu is asking the player to press.
+        (self.title.is_some() || self.screen == Screen::Paused)
             && !self.touch_editing()
             && !self.volt_hub.open
             && !self.volt_studio_open()

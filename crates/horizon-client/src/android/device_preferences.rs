@@ -10,6 +10,9 @@ pub struct Settings {
     pub display_hz: u16,
     pub performance_hints: bool,
     pub gpu_profile: bool,
+    /// Ask the window for the display's highest mode instead of the system
+    /// default, which many phones report as 60 Hz.
+    pub max_refresh: bool,
 }
 
 impl Settings {
@@ -34,14 +37,33 @@ impl Settings {
         if client.get("gpu_profile").is_none() {
             self.gpu_profile = touch["gpu_profile"].as_bool().unwrap_or(false);
         }
+        if client.get("max_refresh").is_none() {
+            self.max_refresh = touch["max_refresh"].as_bool().unwrap_or(false);
+        }
         self.sanitize();
     }
 
     pub fn display_label(self) -> String {
         if self.display_hz == 0 {
-            "System default".into()
+            if self.max_refresh {
+                "Max (request)".into()
+            } else {
+                "System default".into()
+            }
         } else {
             format!("{} Hz (request)", self.display_hz)
+        }
+    }
+
+    /// The live line under the switch: the panel's top rate and what it is
+    /// running at now (unknown parts are simply left out).
+    pub fn refresh_caption(refresh: Option<(f32, f32)>) -> String {
+        match refresh {
+            Some((max, now)) if max > now + 1.0 => format!(
+                "This screen tops out at {max:.0} Hz and is running at {now:.0} Hz now"
+            ),
+            Some((max, _)) => format!("This screen is running at its maximum, {max:.0} Hz"),
+            None => "Request the screen's highest refresh rate, not the 60 Hz default".into(),
         }
     }
 }

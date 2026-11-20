@@ -42,6 +42,12 @@ impl Screen {
     }
 }
 
+/// The height of the button grid, including the two extra Volt rows below
+/// vanilla's (Volt Settings and Controls): the grid is centred on the screen
+/// as a whole, so leaving it at vanilla's 190 pushed every row up into the
+/// icon row above it. Both the buttons and the icons read this one number.
+const PAUSE_GRID_H: f32 = 214.0;
+
 /// PauseScreen buttons: (x, y, width, label key, action id, active).
 /// `links`: the `minecraft:server_links` dialog's button, which the
 /// `pause_screen_additions` tag (empty in vanilla) falls back to when the
@@ -54,7 +60,7 @@ fn pause_buttons(
     links: bool,
 ) -> Vec<(f32, f32, f32, &'static str, u8, bool)> {
     // GridLayout of two 98px columns (padding 4), aligned at (0.5, 0.25).
-    let (grid_w, grid_h) = (212.0, 190.0 + if links { 24.0 } else { 0.0 });
+    let (grid_w, grid_h) = (212.0, PAUSE_GRID_H + if links { 24.0 } else { 0.0 });
     let x0 = ((w - grid_w) * 0.5).floor();
     let y0 = ((h - grid_h) * 0.25).floor();
     let down = if links { 24.0 } else { 0.0 };
@@ -133,7 +139,7 @@ fn icon_active(icon: usize, friends: bool) -> bool {
 }
 fn pause_icons(w: f32, h: f32, links: bool) -> [(f32, f32, &'static str); 4] {
     let x0 = ((w - 212.0) * 0.5).floor() + 60.0;
-    let y = ((h - 166.0 - if links { 24.0 } else { 0.0 }) * 0.25).floor() + 98.0;
+    let y = ((h - PAUSE_GRID_H - if links { 24.0 } else { 0.0 }) * 0.25).floor() + 98.0;
     [
         (x0, y, "gui/sprites/pause_menu/bug"),
         (x0 + 24.0, y, "gui/sprites/pause_menu/social_interactions"),
@@ -249,6 +255,11 @@ impl Game<'_> {
                 .collect();
             ui::tooltip(batch, atlas, &lines, self.cursor);
         }
+        // Touch players need Mouse/Back and the LMB/RMB pair here too; the
+        // pause menu paints its own opaque panel, so draw the corner last.
+        // (The method itself is a no-op off Android; a cfg attribute here
+        // would break the mod weaver, which injects into this function.)
+        self.pad.touch_ui.draw_menu_corner(batch, atlas);
     }
     pub(super) fn pause_click(&mut self) -> Result<()> {
         let (w, h) = {
@@ -600,7 +611,7 @@ mod tests {
         // Options, Disconnect, Volt Settings, Controls) all move down 24
         // together - and the icon row moves up 6, because the grid is
         // centred a quarter of the way down the screen.
-        let (grid_h_with, grid_h_without) = (190.0 + 24.0, 190.0);
+        let (grid_h_with, grid_h_without) = (super::PAUSE_GRID_H + 24.0, super::PAUSE_GRID_H);
         let icons = pause_icons(427.0, 240.0, true);
         let y0_icons = ((240.0f32 - grid_h_with) * 0.25).floor() + 98.0;
         assert_eq!(icons[0].1, y0_icons);

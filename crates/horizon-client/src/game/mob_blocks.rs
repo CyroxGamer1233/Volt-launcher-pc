@@ -427,6 +427,12 @@ impl Game<'_> {
             {
                 // A drinking witch's main hand holds the potion's type, drawn as a potion item.
                 ItemStack::new("minecraft:potion", 1).with_potion(item)
+            } else if off_hand {
+                // Only the main hand keeps a full stack (the equipment
+                // packet's components). Reusing it for the off hand drew the
+                // main hand's item a second time, in the off hand, whenever a
+                // remote player held two different items.
+                ItemStack::new(item, 1)
             } else {
                 // The stack the equipment packet (or the mob's own AI) left:
                 // its components are what the item model reads, a loaded

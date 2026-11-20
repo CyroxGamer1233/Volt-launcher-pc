@@ -3,6 +3,9 @@ use super::*;
 use layout::Placement;
 use serde::{Deserialize, Serialize};
 
+/// How long the overlay (O) button must be held to open its configure menu.
+const OVERLAY_MENU_HOLD: std::time::Duration = std::time::Duration::from_secs(3);
+
 fn default_true() -> bool {
     true
 }
@@ -80,6 +83,8 @@ pub(super) struct CustomFinger {
     pub start: [f32; 2],
     pub previous: [f32; 2],
     pub dragged: bool,
+    /// When the finger went down, so a long press can be told from a tap.
+    pub since: std::time::Instant,
 }
 
 impl CustomButton {
@@ -161,8 +166,14 @@ impl CustomButton {
                 self.background_image = None;
             }
         }
-        self.extra_keys.retain(|k| Self::valid_token(k) && k != "key.keyboard.unknown");
+        // The mapping slots are positional (slot 2 is `extra_keys[0]`, slot 3
+        // is `extra_keys[1]`, ...). An empty slot keeps its "unknown"
+        // placeholder: dropping it would slide every later slot down one, so
+        // filling slot 4 first and slot 2 second appeared to overwrite slot 4.
+        // "unknown" is skipped when the button fires, so it binds nothing.
+        self.extra_keys.retain(|k| Self::valid_token(k));
         self.extra_keys.truncate(8);
+        let mut drop_caption = false;
         if let Some(label) = &mut self.label {
             if label.len() > 48 {
                 let mut end = 48;
@@ -171,6 +182,13 @@ impl CustomButton {
                 }
                 label.truncate(end);
             }
+            // Another launcher's layout names buttons with a description
+            // ("Sprinting (Key)", "Sneak: toggle"), which reads as stray text
+            // over the world. Those fall back to the key's own short caption.
+            drop_caption = imported && !Self::caption_is_label(label);
+        }
+        if drop_caption {
+            self.label = None;
         }
         for p in &mut self.layouts {
             if imported {
@@ -179,6 +197,17 @@ impl CustomButton {
                 p.sanitize();
             }
         }
+    }
+
+    /// Whether an imported caption names the key rather than describing it.
+    /// A caption with brackets, a colon or a whole sentence is a description
+    /// from another launcher's editor, not a label to paint on the button.
+    pub fn caption_is_label(text: &str) -> bool {
+        let text = text.trim();
+        !text.is_empty()
+            && text.chars().count() <= 20
+            && !text.contains(['(', ')', '[', ']', '{', '}', ':'])
+            && text.split_whitespace().count() <= 3
     }
 
     pub fn label(&self) -> String {
@@ -281,6 +310,7 @@ impl TouchControls {
                     start: point,
                     previous: point,
                     dragged: false,
+                    since: std::time::Instant::now(),
                 },
             );
             self.fingers.insert(id, (Role::Ignore, point));
@@ -443,6 +473,24 @@ impl TouchControls {
     ) -> Option<[f32; 2]> {
         if self.custom_fingers.contains_key(&id) {
             if ended {
+                // A long press on the overlay (O) button opens the configure
+                // menu instead of toggling, so hiding, sizing and fading the
+                // overlay all live behind one button.
+                let long_press = self.custom_fingers.get(&id).is_some_and(|finger| {
+                    let on_overlay = finger.button_index.is_some_and(|i| {
+                        let button = &self.settings.custom_buttons[i];
+                        std::iter::once(button.key.as_str())
+                            .chain(button.extra_keys.iter().map(String::as_str))
+                            .any(|token| token == "special:gui_toggle")
+                    });
+                    on_overlay && !finger.dragged && finger.since.elapsed() >= OVERLAY_MENU_HOLD
+                });
+                if long_press {
+                    self.overlay_menu_open = true;
+                    // The press already flipped the overlay; a long press asks
+                    // for the menu, not a toggle, so put it back.
+                    self.controls_hidden = !self.controls_hidden;
+                }
                 self.custom_fingers.remove(&id);
                 self.fingers.remove(&id);
                 self.sync_custom_tokens();
@@ -519,6 +567,7 @@ impl TouchControls {
                     start: point,
                     previous: point,
                     dragged: false,
+                    since: std::time::Instant::now(),
                 },
             );
             self.fingers.insert(id, (Role::Ignore, point));
@@ -593,6 +642,10 @@ impl TouchControls {
             if opacity <= 0.0 {
                 continue;
             }
+            // Does the button paint anything at all? A clear fill with a clear
+            // border leaves only its caption on screen, which reads as loose
+            // text over the world, so such a caption is not painted.
+            let mut paints = true;
             let text_color = if button.bg_color.is_some()
                 || button.stroke_color.is_some()
                 || button.corner_radius.is_some()
@@ -629,6 +682,9 @@ impl TouchControls {
                     .stroke_width
                     .unwrap_or(1.0)
                     .clamp(0.5, (rect[2].min(rect[3]) * 0.3).max(0.5));
+                paints = button.background_image.is_some()
+                    || fill_alpha > 8
+                    || ((stroke >> 24) & 0xFF) > 8;
                 // With a background image the game pre-draws the picture under
                 // this overlay pass; the flat fill would cover it.
                 let fill = if button.background_image.is_some() {
@@ -677,7 +733,14 @@ impl TouchControls {
                 }
                 rgba(25, 25, 25, (opacity * 255.0) as u8)
             };
-            let label = button.label();
+            let label = if !paints {
+                String::new()
+            } else {
+                button.label()
+            };
+            if label.is_empty() {
+                continue;
+            }
             let width = HudBatch::text_width(a, &label);
             let start = b.vertices.len();
             let shadow = button.bg_color.is_some()
@@ -836,6 +899,75 @@ mod tests {
         assert_eq!(t.settings.custom_buttons[0].layouts[0].size, stored);
     }
 
+    /// A control with four different mappings presses all four together,
+    /// which is how a Pojav layout shares one button between several keys.
+    #[test]
+    fn every_mapping_slot_of_a_button_fires() {
+        let mut t = TouchControls::default();
+        t.viewport(2400, 1080);
+        let mut btn = CustomButton::new("key.keyboard.escape".into(), 0);
+        btn.extra_keys = vec![
+            "key.keyboard.t".into(),
+            "key.keyboard.f3".into(),
+            "key.keyboard.g".into(),
+        ];
+        btn.layouts = [Placement {
+            center: [0.5, 0.5],
+            size: 0.12,
+            opacity: 0.8,
+        }; 3];
+        t.settings.custom_buttons.push(btn);
+        let center = t.custom_placement(0).center;
+        t.update(7, center, true, false);
+        let mut down: Vec<String> = t
+            .key_events()
+            .into_iter()
+            .filter(|(_, pressed)| *pressed)
+            .map(|(token, _)| token)
+            .collect();
+        down.sort();
+        assert_eq!(
+            down,
+            [
+                "key.keyboard.escape",
+                "key.keyboard.f3",
+                "key.keyboard.g",
+                "key.keyboard.t"
+            ],
+            "all four mappings must press"
+        );
+        t.update(7, center, false, true);
+        let mut up: Vec<String> = t
+            .key_events()
+            .into_iter()
+            .filter(|(_, pressed)| !*pressed)
+            .map(|(token, _)| token)
+            .collect();
+        up.sort();
+        assert_eq!(up.len(), 4, "and all four must release: {up:?}");
+    }
+
+    /// Slots are positional: binding slot 4 then slot 2 must not shuffle them.
+    #[test]
+    fn mapping_slots_keep_their_positions() {
+        let mut btn = CustomButton::new("key.keyboard.escape".into(), 0);
+        btn.extra_keys = vec![
+            "key.keyboard.unknown".into(),
+            "key.keyboard.unknown".into(),
+            "key.keyboard.g".into(),
+        ];
+        btn.sanitize(false);
+        assert_eq!(
+            btn.extra_keys,
+            [
+                "key.keyboard.unknown",
+                "key.keyboard.unknown",
+                "key.keyboard.g"
+            ],
+            "an empty slot keeps its place"
+        );
+    }
+
     #[test]
     fn toggle_combo_passthrough_swipe_and_drawer_buttons_work_end_to_end() {
         let mut t = TouchControls::default();
@@ -945,5 +1077,26 @@ mod tests {
         assert_eq!(t.custom_at([0.2, 0.5]), Some(5));
         t.inventory_mode = true;
         assert_eq!(t.custom_at([0.2, 0.5]), None);
+    }
+
+    #[test]
+    fn imported_descriptions_are_not_painted_as_captions() {
+        let mut described = CustomButton::new("key.keyboard.left.control".into(), 0);
+        described.label = Some("Sprinting (Key)".into());
+        described.sanitize(true);
+        assert_eq!(described.label, None);
+        assert!(!described.label().contains("Sprinting"));
+        // Short names and the presets' own captions are still painted.
+        for kept in ["Sneak", "Use / Place", "Hotbar Slot 1"] {
+            let mut named = CustomButton::new("key.keyboard.unknown".into(), 0);
+            named.label = Some(kept.into());
+            named.sanitize(true);
+            assert_eq!(named.label.as_deref(), Some(kept));
+        }
+        // The launcher's own button labels are never second-guessed.
+        let mut own = CustomButton::new("key.keyboard.unknown".into(), 0);
+        own.label = Some("Sneak: toggle".into());
+        own.sanitize(false);
+        assert_eq!(own.label.as_deref(), Some("Sneak: toggle"));
     }
 }

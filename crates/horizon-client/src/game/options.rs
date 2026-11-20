@@ -237,9 +237,13 @@ impl Game<'_> {
     }
     /// Hides the native IME as soon as a keybinding starts capture: Winit
     /// defers ordinary Android hardware keys to the IME while it is active.
+    ///
+    /// Not while the on-screen key list is open: that list needs no IME, and
+    /// dismissing the keyboard made the platform put its own "show keyboard"
+    /// chip over the grid, which read as a window with nothing in it.
     fn options_close_keyboard_for_binding(&mut self) {
         #[cfg(target_os = "android")]
-        if self.ui.options.selected_key.is_some() {
+        if self.ui.options.selected_key.is_some() && self.ui.options.key_picker.is_none() {
             crate::platform::hide();
         }
     }
@@ -299,6 +303,16 @@ impl Game<'_> {
     /// Mouse buttons pressed while a key is being bound.
     pub(super) fn options_waiting_for_key(&self) -> bool {
         self.ui.options.selected_key.is_some()
+    }
+    /// Whether a press should bind the mouse button it was made with.
+    ///
+    /// Not while the on-screen key list is open: it sets `selected_key` too,
+    /// so the old gate sent every tap on the grid to `options_bind_mouse`,
+    /// which bound Left (or Pick's Middle) to the row being edited. That is
+    /// why tapping a key looked inert *and* why rows ended up on mouse
+    /// buttons. The list stores the chosen key itself instead.
+    pub(super) fn options_binds_mouse_button(&self) -> bool {
+        self.options_waiting_for_key() && self.ui.options.key_picker.is_none()
     }
     pub(super) fn options_bind_mouse(&mut self, button: MouseButton) -> Result<()> {
         let events = self.ui.options.bind_mouse(&mut self.settings, button);

@@ -6,10 +6,9 @@ import android.view.WindowInsets;
 import android.view.WindowInsetsController;
 import android.view.WindowManager;
 
-/** SAF callback bridge. The native activity, UI and file operations stay Rust.
- *  Deliberately contains no PackageInstaller / REQUEST_INSTALL_PACKAGES code:
- *  update APKs download in the user's browser, so Play Protect never sees an
- *  "installs other apps" signal when players sideload Volt Launcher. */
+/** SAF callback bridge plus the two pieces of Android plumbing the launcher
+ *  cannot do from Rust: handing a downloaded update APK to PackageInstaller,
+ *  and coming back to the front once a browser sign-in finishes. */
 public final class HorizonActivity extends android.app.NativeActivity {
     static { System.loadLibrary("horizon_android"); }
 
@@ -73,6 +72,56 @@ public final class HorizonActivity extends android.app.NativeActivity {
         setIntent(intent);
     }
 
+    /** Installs a downloaded update. The APK is copied into a PackageInstaller
+     *  session and committed; Android shows its own "update this app?" dialog,
+     *  so the player is never asked to trust a browser download. */
+    public boolean installApk(String path) {
+        if (path == null || path.isEmpty()) return false;
+        try {
+            java.io.File file = new java.io.File(path);
+            if (!file.isFile() || file.length() <= 0) return false;
+            android.content.pm.PackageInstaller installer = getPackageManager().getPackageInstaller();
+            if (installer == null) return false;
+            android.content.pm.PackageInstaller.SessionParams params =
+                    new android.content.pm.PackageInstaller.SessionParams(
+                            android.content.pm.PackageInstaller.SessionParams.MODE_FULL_INSTALL);
+            int id = installer.createSession(params);
+            try (android.content.pm.PackageInstaller.Session session = installer.openSession(id)) {
+                try (java.io.InputStream in = new java.io.FileInputStream(file)) {
+                    try (java.io.OutputStream out = session.openWrite("volt-update.apk", 0, file.length())) {
+                        byte[] buffer = new byte[1 << 16];
+                        int read;
+                        while ((read = in.read(buffer)) > 0) out.write(buffer, 0, read);
+                        session.fsync(out);
+                    }
+                }
+                android.content.Intent callback = new android.content.Intent(this, HorizonActivity.class);
+                callback.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK);
+                int flags = android.app.PendingIntent.FLAG_UPDATE_CURRENT;
+                if (Build.VERSION.SDK_INT >= 31) flags |= android.app.PendingIntent.FLAG_MUTABLE;
+                android.app.PendingIntent pending =
+                        android.app.PendingIntent.getActivity(this, id, callback, flags);
+                session.commit(pending.getIntentSender());
+            }
+            file.delete();
+            return true;
+        } catch (Throwable ignored) {
+            return false;
+        }
+    }
+
+    /** Comes back to the launcher after the browser finished a sign-in. */
+    public void bringToFront() {
+        try {
+            android.content.Intent intent = new android.content.Intent(
+                    this, HorizonActivity.class);
+            intent.addFlags(android.content.Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
+                    | android.content.Intent.FLAG_ACTIVITY_NEW_TASK);
+            startActivity(intent);
+        } catch (Throwable ignored) {
+        }
+    }
+
     public static String supportedAbis() {
         StringBuilder sb = new StringBuilder();
         String[] abis = android.os.Build.SUPPORTED_ABIS;
@@ -84,6 +133,31 @@ public final class HorizonActivity extends android.app.NativeActivity {
             }
         }
         return sb.toString();
+    }
+
+    /**
+     * "max:current" refresh rates in Hz, from the display's supported modes.
+     * Empty when the platform cannot report them.
+     */
+    @SuppressWarnings("deprecation")
+    public String displayRefresh() {
+        try {
+            android.view.Display display = getWindowManager().getDefaultDisplay();
+            if (display == null) return "";
+            float current = display.getRefreshRate();
+            float max = current;
+            if (android.os.Build.VERSION.SDK_INT >= 23) {
+                android.view.Display.Mode[] modes = display.getSupportedModes();
+                if (modes != null) {
+                    for (android.view.Display.Mode mode : modes) {
+                        if (mode != null && mode.getRefreshRate() > max) max = mode.getRefreshRate();
+                    }
+                }
+            }
+            return Float.toString(max) + ":" + Float.toString(current);
+        } catch (Throwable ignored) {
+            return "";
+        }
     }
 
     public String appVersionName() {

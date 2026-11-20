@@ -1594,18 +1594,17 @@ impl Game<'_> {
     /// launcher's next build leaves it out. Volt Boost's Mod Lag Shield
     /// additionally rests cosmetic-only mods — their hooks answer "off" so
     /// their per-frame work stops — without touching the player's choices.
+    /// Whether native mod `mod_id` runs. Every mod starts off, so this is the
+    /// enabled set; `disabled` is kept because the launcher's builds read it
+    /// to leave a turned-off mod out, and an older profile wrote only there.
     pub(super) fn native_on(&self, mod_id: &str) -> bool {
         // Hot path: woven hooks ask this from per-frame and per-entity call
-        // sites. With nothing disabled and no lag shield (the common case)
-        // answer from two flag reads, no string work at all.
-        if !self.settings.extras.mod_lag_shield {
-            if self.settings.mods.disabled.is_empty() {
-                return true;
-            }
-        } else if COSMETIC_MODS.contains(&mod_id) {
+        // sites, so answer from the two sets before touching anything else.
+        if COSMETIC_MODS.contains(&mod_id) && self.settings.extras.mod_lag_shield {
             return false;
         }
-        !self.settings.mods.disabled.contains(mod_id)
+        self.settings.mods.enabled.contains(mod_id)
+            && !self.settings.mods.disabled.contains(mod_id)
     }
     /// Sets a block in the current authoritative level through `Level.setBlock`.
     /// Returns false for another dimension, an invalid state, or no change.

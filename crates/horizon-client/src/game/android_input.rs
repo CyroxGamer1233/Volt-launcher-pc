@@ -122,12 +122,22 @@ impl Game<'_> {
         true
     }
 
+    /// The key a touch button's `action:<mapping>` token stands for: the key
+    /// the player bound to that mapping, else vanilla's default. Reading the
+    /// default alone meant every imported/‌edited button acted on a key that
+    /// was not the one the settings page showed.
+    pub(super) fn captured_binding(&self, mapping: &str) -> &str {
+        let bound = self.settings.keys.get(mapping);
+        if bound == "key.keyboard.unknown" {
+            horizon_client::keybinds::KeyBinds::default_of(mapping)
+        } else {
+            bound
+        }
+    }
     pub(super) fn android_custom_key_held(&self, key: KeyCode) -> bool {
         self.pad.touch.held_custom_tokens().any(|token| {
             if let Some(mapping) = token.strip_prefix("action:") {
-                horizon_client::keybinds::key_code(horizon_client::keybinds::KeyBinds::default_of(
-                    mapping,
-                )) == Some(key)
+                horizon_client::keybinds::key_code(self.captured_binding(mapping)) == Some(key)
             } else {
                 horizon_client::keybinds::key_code(token).is_some_and(|physical| {
                     self.settings
@@ -144,9 +154,8 @@ impl Game<'_> {
             "special:mouse_sec" => button == MouseButton::Right,
             "special:mouse_mid" => button == MouseButton::Middle,
             _ => token.strip_prefix("action:").is_some_and(|mapping| {
-                horizon_client::keybinds::mouse_button(
-                    horizon_client::keybinds::KeyBinds::default_of(mapping),
-                ) == Some(button)
+                horizon_client::keybinds::mouse_button(self.captured_binding(mapping))
+                    == Some(button)
             }),
         })
     }
@@ -310,7 +319,7 @@ impl Game<'_> {
                     }
                     continue;
                 }
-                let default = horizon_client::keybinds::KeyBinds::default_of(mapping);
+                let default = self.captured_binding(mapping);
                 let result = if let Some(key) = horizon_client::keybinds::key_code(default) {
                     if down && self.screenshot_shortcut(key, false) {
                         Ok(())
@@ -529,7 +538,13 @@ impl Game<'_> {
         }
     }
     pub(super) fn android_waiting_for_binding(&self) -> bool {
-        let options = self.screen == Screen::Options && self.options_waiting_for_key();
+        // The on-screen key list supplies the key, so a screen tap is not a
+        // mouse-binding attempt. Leaving this true made `android_menu_touch`
+        // drop every tap as a potential binding, which is why the list, the
+        // pager and Done all looked dead.
+        let options = self.screen == Screen::Options
+            && self.options_waiting_for_key()
+            && self.ui.options.key_picker.is_none();
         #[cfg(feature = "mods")]
         let waiting = options || (self.screen == Screen::Mod && self.mod_screen_waiting_for_key());
         #[cfg(not(feature = "mods"))]
@@ -604,7 +619,7 @@ impl Game<'_> {
         }
         // The open hub window also rides over menus: it takes the tap
         // (a tap outside its panel closes it) before the screen below.
-        if self.volt_hub.open
+        if (self.volt_hub.open || self.volt_badge_page_open())
             && self.pad_in_menu()
             && t.phase == TouchPhase::Started
             && self.try_click_volt_hud((p[0], p[1]), true)
@@ -632,10 +647,14 @@ impl Game<'_> {
             self.pad.touch.ignore(t.id);
             return Ok(true);
         }
-        if let Some(action) = self
-            .pad
-            .touch_ui
-            .action(b.width, b.height, p, self.pad_in_menu())
+        // The Options screen owns every tap: the debug drawer is not drawn
+        // there, so letting it claim this corner would eat taps on the
+        // binding rows and on the on-screen key list behind it.
+        if !matches!(self.screen, Screen::Options)
+            && let Some(action) = self
+                .pad
+                .touch_ui
+                .action(b.width, b.height, p, self.pad_in_menu())
         {
             if t.phase == TouchPhase::Started {
                 self.pad.touch.clear();
@@ -856,8 +875,15 @@ impl Game<'_> {
             }
         }
         // Title screens also use Playing: their focused text fields must keep
-        // the IME until the user confirms or closes the editor.
-        if !self.pad_in_menu() && !self.volt_studio_open() && crate::platform::active() {
+        // the IME until the user confirms or closes the editor. The same goes
+        // for the in-world chat box: it is a text editor, and dismissing the
+        // IME there left no way to type until the keyboard button was found.
+        let typing_in_chat = self.screen == Screen::Chat && self.title.is_none();
+        if !self.pad_in_menu()
+            && !self.volt_studio_open()
+            && !typing_in_chat
+            && crate::platform::active()
+        {
             crate::platform::hide();
         }
     }
@@ -1039,7 +1065,10 @@ impl Game<'_> {
             t.phase,
             [self.cursor.0, self.cursor.1],
             [b.width, b.height],
-            self.settings.touch.virtual_mouse_sensitivity,
+            // Mouse Settings > Cursor accuracy: below 1.0 the pointer tracks
+            // the thumb more finely, which is what accuracy means for a
+            // virtual mouse - the same drag covers fewer pixels.
+            self.settings.touch.virtual_mouse_sensitivity * self.settings.touch.pointer_accuracy,
             !self.pad.touch_ui.mouse_held(),
         );
         self.window_event(

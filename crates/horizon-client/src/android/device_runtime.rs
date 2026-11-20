@@ -73,37 +73,83 @@ pub struct Frame {
     start: Instant,
     enabled: bool,
 }
-/// The actual duration is CPU-side frame work including submission waits, not GPU execution time.
-pub fn frame(enabled: bool, hz: u16, active: bool) -> Frame {
+/// The display's highest offered mode, cached for the session. Asking the
+/// window for a rate the panel does not have makes the system pick the
+/// closest one, so an over-request is safe; 120 is the fallback when the
+/// platform cannot report its modes.
+fn panel_hz() -> f32 {
+    static PANEL: std::sync::OnceLock<f32> = std::sync::OnceLock::new();
+    *PANEL.get_or_init(|| {
+        crate::platform::display_refresh()
+            .map(|(max, _)| max)
+            .filter(|max| *max > 0.0)
+            .unwrap_or(120.0)
+    })
+}
+
+/// The rate the window should ask the system for (0 = no preference).
+fn requested_rate(active: bool, hz: u16) -> f32 {
+    if !active {
+        return 0.0;
+    }
+    if hz != 0 {
+        f32::from(hz)
+    } else if preferences().max_refresh {
+        panel_hz()
+    } else {
+        0.0
+    }
+}
+
+/// Asks the current window for `rate` FPS. `0.0` drops the request and lets
+/// the system use its default, which is what left many phones at 60 Hz.
+pub fn request_window_rate(active: bool, hz: u16) {
+    let requested = requested_rate(active, hz);
     STATE.with(|slot| {
         let mut r = slot.borrow_mut();
         crate::APP.with(|app| {
             if let Some(w) = app.borrow().as_ref().and_then(|a| a.native_window()) {
                 let ptr = w.ptr().as_ptr() as usize;
-                let requested = if active { hz } else { 0 };
-                if r.window != ptr || r.hz != requested {
-                    unsafe {
-                        let p = r.symbol(c"ANativeWindow_setFrameRate");
-                        r.rate_status = if p.is_null() {
-                            -38
-                        } else {
-                            let f: unsafe extern "C" fn(*mut c_void, f32, i8) -> i32 =
-                                std::mem::transmute(p);
-                            f(ptr as *mut c_void, f32::from(requested), 0)
-                        };
-                    }
-                    r.window = ptr;
-                    r.hz = requested;
+                let key = requested as u16;
+                if r.window == ptr && r.hz == key {
+                    return;
                 }
+                unsafe {
+                    let p = r.symbol(c"ANativeWindow_setFrameRate");
+                    r.rate_status = if p.is_null() {
+                        -38
+                    } else {
+                        let f: unsafe extern "C" fn(*mut c_void, f32, i8) -> i32 =
+                            std::mem::transmute(p);
+                        // 1 = FIXED_SOURCE: the system switches to a display
+                        // mode that can actually hold this rate.
+                        f(ptr as *mut c_void, requested, i8::from(requested > 0.0))
+                    };
+                }
+                r.window = ptr;
+                r.hz = key;
             }
         });
+    });
+}
+
+/// The actual duration is CPU-side frame work including submission waits, not GPU execution time.
+pub fn frame(enabled: bool, hz: u16, active: bool) -> Frame {
+    request_window_rate(active, hz);
+    STATE.with(|slot| {
+        let mut r = slot.borrow_mut();
         if !enabled || !active {
             r.close_hint();
             r.hint_failed = false;
             return;
         }
         // Use an explicit frame budget; never infer it from a slow frame itself.
-        let target = 1_000_000_000i64 / i64::from(if hz == 0 { 60 } else { hz });
+        let rate = if hz == 0 {
+            requested_rate(true, 0).max(60.0) as u16
+        } else {
+            hz
+        };
+        let target = 1_000_000_000i64 / i64::from(if rate == 0 { 60 } else { rate });
         unsafe {
             if r.session.is_null() && !r.hint_failed {
                 let get = r.symbol(c"APerformanceHint_getManager");
@@ -207,8 +253,12 @@ pub fn configure(mut settings: crate::device_preferences::Settings) {
     settings.sanitize();
     let bits = u32::from(settings.display_hz)
         | (u32::from(settings.performance_hints) << 16)
-        | (u32::from(settings.gpu_profile) << 17);
+        | (u32::from(settings.gpu_profile) << 17)
+        | (u32::from(settings.max_refresh) << 18);
     PREFERENCES.store(bits, std::sync::atomic::Ordering::Relaxed);
+    // Apply the new rate now: the launcher's own window owns the request
+    // until the game takes over the same window.
+    request_window_rate(true, settings.display_hz);
 }
 pub fn preferences() -> crate::device_preferences::Settings {
     let bits = PREFERENCES.load(std::sync::atomic::Ordering::Relaxed);
@@ -216,5 +266,6 @@ pub fn preferences() -> crate::device_preferences::Settings {
         display_hz: bits as u16,
         performance_hints: bits & (1 << 16) != 0,
         gpu_profile: bits & (1 << 17) != 0,
+        max_refresh: bits & (1 << 18) != 0,
     }
 }

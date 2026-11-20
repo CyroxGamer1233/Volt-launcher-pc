@@ -278,7 +278,6 @@ mod storage;
 mod structure_blocks;
 mod structure_edit;
 mod structures;
-mod subtitle_hud;
 mod sulfur_cubes;
 mod test_block_edit;
 mod test_blocks;
@@ -1965,6 +1964,15 @@ struct Game<'a> {
     /// `FogRenderer`'s evolving state.
     fog: horizon_client::fog::FogState,
     screen_fx: horizon_client::screen_effects::ScreenEffects,
+    /// Motion Blur: the camera turn of the last frame, for the smear radius.
+    motion_blur: horizon_client::volt_feel_mods::MotionBlur,
+    /// The smear radius to draw this frame, 0.0 sharp to 1.0 maximum.
+    motion_blur_strength: f32,
+    /// HitReg: click-to-confirm timing and the hit marker on screen.
+    hitreg: horizon_client::volt_feel_mods::HitReg,
+    /// The mob whose attack is waiting for the server's damage event, so a
+    /// hit on a server is timed from the press to the confirmation too.
+    hitreg_target: Option<u32>,
     /// `LocalPlayer.itemActivation`: the totem flying up to the screen.
     item_activation: horizon_client::item_activation::ItemActivation,
     weather_parameters: horizon_client::weather::ParameterCache,
@@ -2636,7 +2644,6 @@ struct Game<'a> {
     border_state: horizon_client::border_render::BorderRenderState,
     /// `Hud.tabList`: the player list's header, footer and heart states.
     tab_list: horizon_client::tab_list::TabList,
-    subtitles: subtitle_hud::SubtitleState,
     adv: advancements::AdvState,
     restore_player_state: bool,
     stats_ui: stats_screen::StatsUi,
@@ -3585,12 +3592,17 @@ impl Game<'_> {
                 && (alive || item.age == 6000 && item.position.y > -128.0)
                 && item.ticks.is_multiple_of(rate)
             {
-                horizon_client::entities::merge_with_neighbours(
+                // Vanilla searches half a block; the Volt setting widens the
+                // search so scattered drops collapse into full stacks. The
+                // merge rules themselves are unchanged.
+                let (merge, reach) = (self.settings.extras.merge_dropped, 3.0);
+                horizon_client::entities::merge_within_neighbours(
                     &mut items,
                     &mut removed,
                     &mut cells,
                     i,
                     &max_stack,
+                    if merge { reach } else { 0.5 },
                 );
             }
             let item = &mut items[i];
@@ -7434,17 +7446,16 @@ impl Game<'_> {
         // GuiGraphicsExtractor.itemDecorations, laid out at the origin and
         // moved to (x, y): the damage bar, the cooldown shade and the count.
         let info = self.items().get(&stack.item);
-        let max_damage = info.map_or(0, |info| info.max_damage as i32);
         let cooldown =
             horizon_client::cooldowns::group(stack, info.and_then(|i| i.use_cooldown.as_ref()));
         let partial = self.clock.fraction() as f32;
         let decorations = hud_overlays::ItemDecorations {
             count: stack.count,
             count_text,
-            // BundleItem overrides the bar with its fullness.
-            bar: horizon_client::bundle::Contents::of(self.items(), stack)
-                .map(|c| c.bar())
-                .unwrap_or_else(|| hud_overlays::damage_bar(stack.damage as i32, max_damage)),
+            // No durability bar under the count: it is noise on a phone's
+            // hotbar, and the tooltip already carries the numbers. BundleItem
+            // keeps its fullness bar, which is how a bundle shows what is left.
+            bar: horizon_client::bundle::Contents::of(self.items(), stack).and_then(|c| c.bar()),
             cooldown: self.cooldowns.percent(&cooldown, partial),
         };
         let mut draws = vec![hud_layout::GuiDraw::Push(vec![
@@ -7622,6 +7633,10 @@ impl Game<'_> {
                 let draws = hud_layout::crosshair(wi, hi, attack, full);
                 hud_layout::paint(&mut batch, &self.gui.atlas, &draws);
             }
+            // HitReg draws whether or not a crosshair does: touch layouts hide
+            // the reticle, and the mod looked completely dead there because
+            // its whole readout lived inside the crosshair branch.
+            self.draw_hitreg(&mut batch, wi, hi);
             if spectator {
                 self.draw_spectator_hotbar(&mut batch);
             } else {
@@ -7848,7 +7863,6 @@ impl Game<'_> {
             horizon_client::hud::inset_overlay(&mut batch, margins, |b| {
                 self.draw_titles(b, bar_height);
                 self.draw_scoreboard(b);
-                self.draw_subtitles(b);
             });
         }
         let atlas = &self.gui.atlas;
@@ -10536,9 +10550,28 @@ impl Game<'_> {
         scale > 0.9 && falling && !restricted
     }
     /// Player.attack with the attack-strength charge, crits and knockback.
+    /// Whether the HitReg mod is switched on for this session.
+    fn hitreg_on(&self) -> bool {
+        self.settings
+            .extras
+            .mod_catalog
+            .is_on(horizon_client::volt_mods::VoltModId::HitReg)
+    }
+    /// Whether the Motion Blur mod is switched on for this session.
+    fn motion_blur_on(&self) -> bool {
+        self.settings
+            .extras
+            .mod_catalog
+            .is_on(horizon_client::volt_mods::VoltModId::MotionBlur)
+    }
     fn attack(&mut self) -> bool {
         if self.spectator() {
             return false;
+        }
+        // HitReg starts its clock on the press; `confirm_hit` stops it on a
+        // landed blow, `miss` clears it so a whiff reports nothing.
+        if self.hitreg_on() {
+            self.hitreg.attack(std::time::Instant::now());
         }
         // A painting nearer than the targeted block and mob breaks instead.
         if let Some((i, d)) = self.painting_hit()
@@ -10570,6 +10603,9 @@ impl Game<'_> {
             return true;
         }
         let Some((index, distance)) = self.mob_hit() else {
+            // Nothing in reach: clear HitReg's clock so the next landed hit
+            // is timed from its own press, not this one.
+            self.hitreg.miss();
             return false;
         };
         if let Some(hit) = self.pick() {
@@ -10610,6 +10646,10 @@ impl Game<'_> {
             None => horizon_client::mobs::Damage::of(horizon_client::mobs::DamageKind::Generic),
         };
         let landed = self.hurt_by_player(index, amount, source);
+        if landed && self.hitreg_on() {
+            // HitReg: stop the clock. `attack` armed it on the press.
+            self.hitreg.confirm(std::time::Instant::now());
+        }
         if landed && old_health > 0.0 && !self.mobs[index].alive() {
             self.native_kill_event(index);
         }
@@ -10788,7 +10828,6 @@ impl Game<'_> {
         self.load_bossbars();
         self.tick_functions();
         self.tick_worldborder();
-        self.tick_subtitles();
         self.spawn_phantoms();
         self.tick_advancements();
         self.tick_player_model();
@@ -14223,15 +14262,14 @@ impl Game<'_> {
         }
         #[cfg(target_os = "android")]
         {
+            // Never over Options: that screen draws its own key list, and
+            // the drawer's F1-F12 grid landed on top of it (over the binding
+            // rows) looking like a second, broken picker.
             if (crate::touch_visible() || self.settings.keypad.enabled)
                 && self.pad.touch.editor.is_none()
                 && !self.volt_studio_open()
+                && self.screen != Screen::Options
             {
-                // A row is waiting for a key: open the key grid, so the keys a
-                // tap can produce are on screen instead of behind "...".
-                if self.android_waiting_for_binding() {
-                    self.pad.touch_ui.expanded = true;
-                }
                 self.pad
                     .touch_ui
                     .draw(&mut hud, &self.gui.atlas, self.pad_in_menu());
@@ -14260,6 +14298,17 @@ impl Game<'_> {
         } else {
             (view_yaw, view_pitch)
         };
+        // Motion Blur reads the turn since the last frame. The title panorama
+        // spins on its own, so it is not the player's motion: reset instead of
+        // smearing the menu.
+        if title || !self.motion_blur_on() {
+            self.motion_blur.reset();
+        } else {
+            // The strength knob (1..=5) scales the raw velocity response; 3
+            // is the value this mod shipped with.
+            let amount = f32::from(self.settings.extras.motion_blur_strength.clamp(1, 5)) / 3.0;
+            self.motion_blur_strength = self.motion_blur.frame(yaw, pitch, amount);
+        }
         let fov_degrees = if title {
             85.0
         } else {
@@ -14537,6 +14586,7 @@ impl Game<'_> {
                 .boss_overlay
                 .darken_amount(self.clock.fraction() as f32),
             menu_blur: self.menu_blur(),
+            motion_blur: self.motion_blur_params(),
             post_effects: horizon_client::post_chain::Request {
                 effects: &requested_post_effects,
                 root: &self.options.resources,
@@ -14672,7 +14722,70 @@ impl Game<'_> {
                     || self.dialog_open()
                     || (self.screen == Screen::Win && self.win_screen_pauses())));
         let radius = self.settings.menu_blur as f32;
-        (blurred && radius >= 1.0).then_some(radius)
+        if blurred && radius >= 1.0 {
+            return Some(radius);
+        }
+        None
+    }
+    /// The Motion Blur mod's request for this frame: Natural Motion Blur's
+    /// strength slider, algorithm and profile, driven by the camera's own
+    /// turn. `None` means "draw it sharp", which is also what happens while
+    /// standing still: no turn, no smear.
+    fn motion_blur_params(&self) -> Option<horizon_client::motion_blur::Params> {
+        use horizon_client::motion_blur::{Algorithm, Params, Profile};
+        if self.title.is_some() || self.screen != Screen::Playing || !self.motion_blur_on() {
+            return None;
+        }
+        // The slider is the mod's 1..10 and is already folded into the
+        // response the camera step measured (3, the old default, is calm).
+        let strength = self.motion_blur_strength;
+        let strength = if self.settings.extras.motion_blur_refresh_scale {
+            Params {
+                strength: strength.min(1.0),
+                ..Default::default()
+            }
+            .scaled_strength(self.motion_blur.frame_seconds(), 60.0, true)
+        } else {
+            strength.min(1.0)
+        };
+        if strength <= 0.004 {
+            return None;
+        }
+        // Degrees of view swept per screen: the vertical FOV from the video
+        // settings, the horizontal one widened by the frame's aspect.
+        let fov_y = self.settings.fov.clamp(30.0, 130.0).to_radians();
+        let aspect = self
+            .window
+            .as_ref()
+            .map(|w| {
+                let size = w.inner_size();
+                if size.height == 0 {
+                    1.777
+                } else {
+                    size.width as f32 / size.height as f32
+                }
+            })
+            .unwrap_or(1.777);
+        let fov_x = 2.0 * ((fov_y * 0.5).tan() * aspect).atan();
+        let (right, up) = self.motion_blur.delta();
+        // The picture slides against the turn, so the smear trails it. The
+        // shutter is what turns "how far the view swept" into "how long the
+        // smear is": the mod's taps reach well past one frame's worth.
+        const SHUTTER: f32 = 2.0;
+        let velocity = [
+            (-right * SHUTTER / fov_x.max(0.05)).clamp(-0.4, 0.4),
+            (up * SHUTTER / fov_y.max(0.05)).clamp(-0.4, 0.4),
+        ];
+        Some(Params {
+            velocity,
+            strength,
+            samples: Params::samples_for(strength),
+            profile: Profile::from_index(self.settings.extras.motion_blur_profile),
+            algorithm: Algorithm::from_index(self.settings.extras.motion_blur_algorithm),
+            // The mod fades the previous frame by the strength; the
+            // accumulation algorithms need a floor or they never show.
+            blend: (0.35 + strength * 0.5).clamp(0.0, 0.9),
+        })
     }
     /// `LevelExtractor` / `LevelRenderer`: the world border wall this frame.
     fn border_draw(
@@ -15537,6 +15650,24 @@ impl Game<'_> {
                 let Some(size) = self.window.as_ref().map(|w| w.inner_size()) else {
                     return;
                 };
+                // A finger that started on the hotbar keeps re-picking the slot
+                // it is over while it slides, so attributes can be swapped by
+                // dragging along the bar instead of tapping each slot.
+                if self.pad.touch_ui.hotbar_drag == Some(touch.id) {
+                    if matches!(touch.phase, TouchPhase::Ended | TouchPhase::Cancelled) {
+                        self.pad.touch_ui.hotbar_drag = None;
+                        self.pad.in_use = false;
+                        return;
+                    }
+                    let batch = HudBatch::new([size.width, size.height]);
+                    if let Some(slot) = horizon_client::touch::hotbar_slot_at_x(
+                        batch.width,
+                        touch.location.x as f32 / batch.scale,
+                    ) {
+                        self.selected = slot;
+                    }
+                    return;
+                }
                 if touch.phase == TouchPhase::Started {
                     let batch = HudBatch::new([size.width, size.height]);
                     let point = [
@@ -15551,6 +15682,7 @@ impl Game<'_> {
                         ])
                     {
                         self.selected = slot;
+                        self.pad.touch_ui.hotbar_drag = Some(touch.id);
                         self.pad.touch.ignore(touch.id);
                         return;
                     }
@@ -15593,6 +15725,12 @@ impl Game<'_> {
                     self.android_release_touch_keys(true);
                     self.audio.play_button_click();
                     self.open_options(false);
+                } else if std::mem::take(&mut self.pad.touch.overlay_menu_open) {
+                    // Holding the overlay (O) button lands straight on the
+                    // page that hides, sizes and fades the overlay.
+                    self.android_release_touch_keys(true);
+                    self.audio.play_button_click();
+                    self.open_options_at(false, horizon_client::options_ui::Page::MouseSettings);
                 } else if std::mem::take(&mut self.pad.touch.debug_requested) {
                     self.audio.play_button_click();
                     if !self.pad.touch_ui.key_held(KeyCode::F3) {
@@ -16137,7 +16275,7 @@ impl Game<'_> {
                     if canceled {
                         return Ok(());
                     }
-                    if self.options_waiting_for_key() && state == ElementState::Pressed {
+                    if self.options_binds_mouse_button() && state == ElementState::Pressed {
                         self.options_bind_mouse(button)?;
                     } else if matches!(button, MouseButton::Left | MouseButton::Right) {
                         self.options_mouse(
@@ -17241,6 +17379,10 @@ impl<'a> Game<'a> {
             gui,
             fog: Default::default(),
             screen_fx: Default::default(),
+            motion_blur: Default::default(),
+            motion_blur_strength: 0.0,
+            hitreg: Default::default(),
+            hitreg_target: None,
             item_activation: Default::default(),
             weather_parameters: Default::default(),
             panorama_rotation: Default::default(),
@@ -17642,7 +17784,6 @@ impl<'a> Game<'a> {
             border_renderer: Default::default(),
             border_state: Default::default(),
             tab_list: Default::default(),
-            subtitles: Default::default(),
             adv: Default::default(),
             restore_player_state: true,
             stats_ui: Default::default(),
@@ -19039,6 +19180,7 @@ pub(crate) fn loading_frame(hud: &HudBatch) -> Frame<'_> {
         chunk_fade: 0.0,
         post_effects: horizon_client::post_chain::Request::none(),
         menu_blur: None,
+        motion_blur: None,
     }
 }
 

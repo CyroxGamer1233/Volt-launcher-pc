@@ -208,6 +208,7 @@
   "volt.boost.button.short": "Volt",
   "volt.boost.title": "Volt Boost — Performance & Optimization",
   "volt.boost.tooltip": "Volt Boost: Tier 1-3 FPS, GPU, CPU, RAM, entity, chunk, particle & thermal optimizations (all off by default).",
+  "volt.pages.mouse": "Mouse Settings",
   "volt.options.resolution_scale": "Resolution Scale",
   "volt.options.touch_preset": "Controls Studio Preset",
   "volt.shaders.button": "Volt Shaders",

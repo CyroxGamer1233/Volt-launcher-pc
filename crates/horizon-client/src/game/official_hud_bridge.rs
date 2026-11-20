@@ -11,12 +11,18 @@ impl Game<'_> {
         use super::{official_fps_overlay as fps, official_keystrokes as keys, official_minimap as map};
         fps::reset(); keys::reset(); map::reset();
         let Some(home) = Self::options_path().parent().map(std::path::Path::to_path_buf) else { return; };
+        // Installed and switched on, not just installed: a bundled mod the
+        // player turned off must not come back on the next launch.
+        let on = horizon_client::mod_list::ModList::load(&home);
         for (id, name, version, description) in [
             (fps::ID, fps::NAME, fps::VERSION, fps::DESCRIPTION),
             (keys::ID, keys::NAME, keys::VERSION, keys::DESCRIPTION),
             (map::ID, map::NAME, map::VERSION, map::DESCRIPTION),
         ] {
-            if horizon_client::bundled_native::installed(&home, id) && !mods.iter().any(|m| m.id == id) {
+            if horizon_client::bundled_native::installed(&home, id)
+                && on.enabled.contains(id)
+                && !mods.iter().any(|m| m.id == id)
+            {
                 mods.push(NativeMod { id: id.into(), title: format!("{name} {version}"),
                     description: description.into(), keys: Vec::new() });
             }

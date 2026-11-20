@@ -168,6 +168,10 @@ pub struct Extras {
     pub frame_players_distance: FrameDistance,
     pub frame_dropped: bool,
     pub frame_dropped_distance: FrameDistance,
+    /// Merge nearby identical dropped stacks into one entity (64 items each),
+    /// so a full floor of drops is 32 entities rather than hundreds. Only safe
+    /// where this client owns the world: singleplayer and LAN.
+    pub merge_dropped: bool,
     pub frame_block_entities: bool,
     pub frame_block_entities_distance: FrameDistance,
     pub frame_particles: bool,
@@ -219,7 +223,31 @@ pub struct Extras {
     pub volt_mods: crate::volt_qol::VoltModsConfig,
     /// Built-in 50 pure-Rust native Volt 1.0.0 Mod Catalog state (synced between Launcher & Mod Menu).
     pub mod_catalog: crate::volt_mods::VoltModCatalogState,
+    // --- The floating in-game Volt (V) badge ---
+    /// Side of the badge in GUI pixels (long-press it to change).
+    pub volt_badge_size: u8,
+    /// Badge opacity as a percentage (long-press it to change).
+    pub volt_badge_opacity: u8,
+    /// Turned off from the badge's own long-press menu.
+    pub volt_badge_hidden: bool,
+    // --- Volt Feel mods: their own knobs ---
+    /// Motion Blur strength, 1..=10 (3 is the old fixed value).
+    pub motion_blur_strength: u8,
+    /// Motion Blur algorithm: index into `motion_blur::Algorithm::ALL`
+    /// (Natural Motion Blur's own `blurAlgorithm`).
+    pub motion_blur_algorithm: u8,
+    /// Motion Blur profile: 0 uniform taps, 1 Blackman-sinc weighted.
+    pub motion_blur_profile: u8,
+    /// Motion Blur's `refreshRateScaling`: a slow frame smears further.
+    pub motion_blur_refresh_scale: bool,
+    /// HitReg prints the measured milliseconds next to the marker.
+    pub hitreg_readout: bool,
 }
+
+/// The badge sizes the long-press menu steps through, in GUI pixels.
+pub const VOLT_BADGE_SIZES: [u8; 5] = [18, 26, 34, 42, 52];
+/// The badge opacities the long-press menu steps through, in percent.
+pub const VOLT_BADGE_OPACITIES: [u8; 5] = [30, 50, 70, 85, 100];
 
 impl Default for Extras {
     fn default() -> Self {
@@ -295,6 +323,7 @@ impl Default for Extras {
             frame_players_distance: FrameDistance::Unlimited,
             frame_dropped: true,
             frame_dropped_distance: FrameDistance::Unlimited,
+            merge_dropped: false,
             frame_block_entities: true,
             frame_block_entities_distance: FrameDistance::Unlimited,
             frame_particles: true,
@@ -332,6 +361,14 @@ impl Default for Extras {
             volt_boost_plus: crate::volt_qol::VoltBoostPlusConfig::default(),
             volt_mods: crate::volt_qol::VoltModsConfig::default(),
             mod_catalog: crate::volt_mods::VoltModCatalogState::default(),
+            volt_badge_size: 26,
+            volt_badge_opacity: 100,
+            volt_badge_hidden: false,
+            motion_blur_strength: 3,
+            motion_blur_algorithm: 0,
+            motion_blur_profile: 0,
+            motion_blur_refresh_scale: true,
+            hitreg_readout: true,
         }
     }
 }
@@ -505,6 +542,7 @@ impl Extras {
                     }
                 }
                 "voltFrameDropped" => e.frame_dropped = flag(e.frame_dropped),
+                "voltMergeDropped" => e.merge_dropped = flag(e.merge_dropped),
                 "voltFrameDroppedDist" => {
                     if let Some(v) = FrameDistance::parse(value) {
                         e.frame_dropped_distance = v;
@@ -1017,10 +1055,59 @@ impl Extras {
                     }
                 }
                 "voltModOledAfk" => e.volt_mods.oled_afk_saver = flag(e.volt_mods.oled_afk_saver),
+                // The floating in-game V badge.
+                "voltBadgeSize" => {
+                    if let Ok(v) = value.parse::<u8>() {
+                        e.volt_badge_size = v.clamp(16, 64);
+                    }
+                }
+                "voltBadgeOpacity" => {
+                    if let Ok(v) = value.parse::<u8>() {
+                        e.volt_badge_opacity = v.clamp(10, 100);
+                    }
+                }
+                "voltBadgeHidden" => e.volt_badge_hidden = flag(e.volt_badge_hidden),
+                "motionBlurStrength" => {
+                    if let Ok(v) = value.parse::<u8>() {
+                        e.motion_blur_strength = v.clamp(1, 10);
+                    }
+                }
+                "motionBlurAlgorithm" => {
+                    if let Ok(v) = value.parse::<u8>() {
+                        e.motion_blur_algorithm = v.min(4);
+                    } else if let Some(algorithm) = crate::motion_blur::Algorithm::parse(value) {
+                        e.motion_blur_algorithm = algorithm.index();
+                    }
+                }
+                "motionBlurProfile" => {
+                    if let Ok(v) = value.parse::<u8>() {
+                        e.motion_blur_profile = v.min(1);
+                    } else if let Some(profile) = crate::motion_blur::Profile::parse(value) {
+                        e.motion_blur_profile = profile.index();
+                    }
+                }
+                "motionBlurRefreshScale" => {
+                    e.motion_blur_refresh_scale = flag(e.motion_blur_refresh_scale)
+                }
+                "hitregReadout" => e.hitreg_readout = flag(e.hitreg_readout),
                 _ => {
                     let _ = e.mod_catalog.parse_entry(key, value);
                 }
             }
+        }
+        // Dynamic resolution scaling is gone: it halved the render
+        // resolution whenever the frame rate dipped, which looked like every
+        // model (players included) turning to mush. Nothing may turn it back
+        // on, so a value left in options.txt is dropped here.
+        e.auto_drs = AutoDrsMode::Off;
+        // Snap a hand-edited size back onto a menu step so the badge stays
+        // visible and the long-press steps keep working from either end.
+        if !VOLT_BADGE_SIZES.contains(&e.volt_badge_size) {
+            e.volt_badge_size = VOLT_BADGE_SIZES
+                .iter()
+                .copied()
+                .min_by_key(|c| c.abs_diff(e.volt_badge_size))
+                .unwrap_or(26);
         }
         e
     }
@@ -1113,6 +1200,7 @@ impl Extras {
         push("voltFrameMobsDist", self.frame_mobs_distance.as_str());
         push("voltFramePlayers", bool_text(self.frame_players));
         push("voltFramePlayersDist", self.frame_players_distance.as_str());
+        push("voltMergeDropped", bool_text(self.merge_dropped));
         push("voltFrameDropped", bool_text(self.frame_dropped));
         push("voltFrameDroppedDist", self.frame_dropped_distance.as_str());
         push("voltFrameBlockEntities", bool_text(self.frame_block_entities));
@@ -1502,6 +1590,23 @@ impl Extras {
         );
         push("voltModTimeWeather", self.volt_mods.time_weather.as_str());
         push("voltModOledAfk", bool_text(self.volt_mods.oled_afk_saver));
+        push("voltBadgeSize", &self.volt_badge_size.to_string());
+        push("voltBadgeOpacity", &self.volt_badge_opacity.to_string());
+        push("voltBadgeHidden", bool_text(self.volt_badge_hidden));
+        push("motionBlurStrength", &self.motion_blur_strength.to_string());
+        push(
+            "motionBlurAlgorithm",
+            crate::motion_blur::Algorithm::from_index(self.motion_blur_algorithm).slug(),
+        );
+        push(
+            "motionBlurProfile",
+            crate::motion_blur::Profile::from_index(self.motion_blur_profile).label(),
+        );
+        push(
+            "motionBlurRefreshScale",
+            bool_text(self.motion_blur_refresh_scale),
+        );
+        push("hitregReadout", bool_text(self.hitreg_readout));
         self.mod_catalog.serialize_into(&mut push);
         s
     }
@@ -1661,7 +1766,7 @@ impl Extras {
                 self.chaos_particle_shield = true;
                 self.anim_throttle = false;
                 self.glint_mode = GlintTrimMode::NearbyOnly;
-                self.auto_drs = AutoDrsMode::Target120;
+                self.auto_drs = AutoDrsMode::Off;
                 self.dynamic_fps = DynamicIdleFps::Fps30;
                 self.menu_bg_mode = MenuBgMode::FastDark;
                 self.thermal_guard = true;
@@ -1696,7 +1801,7 @@ impl Extras {
                 self.chaos_particle_shield = true;
                 self.anim_throttle = true;
                 self.glint_mode = GlintTrimMode::Off;
-                self.auto_drs = AutoDrsMode::Aggressive50;
+                self.auto_drs = AutoDrsMode::Off;
                 self.dynamic_fps = DynamicIdleFps::Fps15;
                 self.menu_bg_mode = MenuBgMode::FastDark;
                 self.thermal_guard = true;
@@ -1731,7 +1836,7 @@ impl Extras {
                 self.chaos_particle_shield = true;
                 self.anim_throttle = true;
                 self.glint_mode = GlintTrimMode::NearbyOnly;
-                self.auto_drs = AutoDrsMode::Target60;
+                self.auto_drs = AutoDrsMode::Off;
                 self.dynamic_fps = DynamicIdleFps::Fps15;
                 self.menu_bg_mode = MenuBgMode::FastDark;
                 self.thermal_guard = true;
@@ -1766,7 +1871,7 @@ impl Extras {
                 self.chaos_particle_shield = true;
                 self.anim_throttle = true;
                 self.glint_mode = GlintTrimMode::Off;
-                self.auto_drs = AutoDrsMode::Target60;
+                self.auto_drs = AutoDrsMode::Off;
                 self.dynamic_fps = DynamicIdleFps::Fps15;
                 self.menu_bg_mode = MenuBgMode::FastDark;
                 self.thermal_guard = true;
@@ -1950,6 +2055,8 @@ pub enum Item {
     FramePlayersDistance,
     FrameDropped,
     FrameDroppedDistance,
+    /// Volt Boost > Entities: merge identical drops across a wider search.
+    MergeDropped,
     FrameBlockEntities,
     FrameBlockEntitiesDistance,
     FrameParticles,
@@ -1985,6 +2092,15 @@ pub enum Item {
     MinimapBiome,
     MinimapTime,
     MinimapZoomKey,
+    /// Volt Feel mods and the in-game V badge:
+    MotionBlurStrength,
+    MotionBlurAlgorithm,
+    MotionBlurProfile,
+    MotionBlurRefreshScale,
+    HitRegReadout,
+    VoltBadgeShow,
+    VoltBadgeSize,
+    VoltBadgeOpacity,
     /// Volt Boost page (Tiers 1, 2 & 3):
     VoltPreset,
     VoltAutoOptimize,
@@ -2166,6 +2282,7 @@ pub fn volt_boost_rows() -> Vec<Result<Item, &'static str>> {
         Err("Tier 1 & 3 - Entities, Block Entities & Hub Shield"),
         Ok(VoltEntityCap),
         Ok(VoltItemCap),
+        Ok(MergeDropped),
         Ok(VoltBlockEntityCap),
         Ok(VoltCullSignText),
         Ok(VoltFastShadows),
@@ -2182,7 +2299,6 @@ pub fn volt_boost_rows() -> Vec<Result<Item, &'static str>> {
         Ok(VoltActiveAnimCull),
         Ok(VoltGlintMode),
         Err("Tier 2 & 3 - Scaling, Pacing, Thermal, CPU & RAM"),
-        Ok(VoltAutoDrs),
         Ok(VoltDynamicFps),
         Ok(VoltMenuBg),
         Ok(VoltThermalGuard),
@@ -2217,6 +2333,14 @@ impl Item {
             Item::MouseTweaksWheel => "Scroll wheel moves items",
             Item::Sort => "Sort buttons",
             Item::SortKey => "Sort key",
+            Item::MotionBlurStrength => "Motion Blur strength",
+            Item::MotionBlurAlgorithm => "Motion Blur algorithm",
+            Item::MotionBlurProfile => "Motion Blur profile",
+            Item::MotionBlurRefreshScale => "Motion Blur refresh scaling",
+            Item::HitRegReadout => "HitReg shows the ms",
+            Item::VoltBadgeShow => "In-game V badge",
+            Item::VoltBadgeSize => "V badge size",
+            Item::VoltBadgeOpacity => "V badge opacity",
             Item::NoAi => "No AI",
             Item::AgentControl => "Agent Control",
             Item::DiscordPresence => "Discord Rich Presence",
@@ -2272,6 +2396,7 @@ impl Item {
             Item::FramePlayersDistance => "Player distance",
             Item::FrameDropped => "Dropped items",
             Item::FrameDroppedDistance => "Dropped item distance",
+            Item::MergeDropped => "Merge drop stacks",
             Item::FrameBlockEntities => "Block entities",
             Item::FrameBlockEntitiesDistance => "Block-entity distance",
             Item::FrameParticles => "Particles",
@@ -2442,7 +2567,18 @@ impl Item {
             | VoltShaderTonemap
             | VoltShaderBloom
             | VoltShaderSunRays
-            | VoltShaderVignette => {
+            | VoltShaderVignette
+            | MergeDropped
+            // Volt Feel knobs and the V badge have no master switch of their
+            // own: they act on whatever they control, on or off.
+            | MotionBlurStrength
+            | MotionBlurAlgorithm
+            | MotionBlurProfile
+            | MotionBlurRefreshScale
+            | HitRegReadout
+            | VoltBadgeShow
+            | VoltBadgeSize
+            | VoltBadgeOpacity => {
                 return None;
             }
         })
@@ -2617,6 +2753,9 @@ impl Item {
             Item::FrameDroppedDistance => {
                 "Farthest distance a dropped item still draws at. Unlimited keeps vanilla range."
             }
+            Item::MergeDropped => {
+                "Pulls identical drops three blocks together instead of vanilla's half block, so a floor of separate drops becomes a few full stacks of 64. Same rules as vanilla: same item, same contents, same owner."
+            }
             Item::FrameBlockEntities => {
                 "Renders chests, signs, banners, skulls, beds and other block entities. Off hides their models."
             }
@@ -2774,6 +2913,31 @@ impl Item {
             Item::VoltShaderVignette => {
                 "Applies a gentle cinematic edge darkening around the frame (OFF, Subtle or Strong)."
             }
+            Item::MotionBlurStrength => {
+                "How far the world smears while you turn. 1 is a whisper, 10 is a hard whip; nothing blurs while you stand still."
+            }
+            Item::MotionBlurAlgorithm => {
+                "Which Natural Motion Blur algorithm runs: velocity taps, frame blending, both, or one of the two accumulation blends."
+            }
+            Item::MotionBlurProfile => {
+                "Uniform counts every tap the same; weighted uses the Blackman-sinc window, which trails the smear more softly."
+            }
+            Item::MotionBlurRefreshScale => {
+                "Scales the smear by how long the frame took, so a slow phone smears like a fast one."
+            }
+            Item::HitRegReadout => {
+                "Prints how many milliseconds passed between your click and the hit landing, under the marker."
+            }
+            Item::VoltBadgeShow => {
+                "The floating Volt logo over the game. Hold it for its size, opacity and off switch."
+            }
+            Item::VoltBadgeSize => {
+                "Side of the floating V badge. Holding the badge changes the same value."
+            }
+            Item::VoltBadgeOpacity => {
+                "How solid the floating V badge looks. Holding the badge changes the same value."
+            }
+
         }
     }
     /// The frame-time cost the main switch of an extra shows.
@@ -2825,6 +2989,7 @@ impl Item {
             Item::FrameMobs => e.frame_mobs,
             Item::FramePlayers => e.frame_players,
             Item::FrameDropped => e.frame_dropped,
+            Item::MergeDropped => e.merge_dropped,
             Item::FrameBlockEntities => e.frame_block_entities,
             Item::FrameParticles => e.frame_particles,
             Item::VoltCullLeaves => e.cull_leaves,
@@ -2864,12 +3029,23 @@ impl Item {
             Item::VoltShaderCustomSky => e.volt_shaders.custom_sky,
             Item::VoltShaderSunHalo => e.volt_shaders.sun_halo,
             Item::VoltShaderSunRays => e.volt_shaders.sun_rays,
+            Item::HitRegReadout => e.hitreg_readout,
+            Item::VoltBadgeShow => !e.volt_badge_hidden,
             _ => return None,
         })
     }
     /// Formatted value shown on the option button.
     pub fn value(self, e: &Extras) -> String {
         match self {
+            Item::MotionBlurStrength => format!("{}/10", e.motion_blur_strength.clamp(1, 10)),
+            Item::MotionBlurAlgorithm => {
+                crate::motion_blur::Algorithm::from_index(e.motion_blur_algorithm).label().into()
+            }
+            Item::MotionBlurProfile => {
+                crate::motion_blur::Profile::from_index(e.motion_blur_profile).label().into()
+            }
+            Item::VoltBadgeSize => format!("{} px", e.volt_badge_size),
+            Item::VoltBadgeOpacity => format!("{}%", e.volt_badge_opacity),
             Item::SortKey => crate::keybinds::display_name(&e.sort_key).plain(),
             Item::WaypointKey => crate::keybinds::display_name(&e.waypoint_key).plain(),
             Item::MinimapZoomKey => crate::keybinds::display_name(&e.minimap_zoom_key).plain(),
@@ -2985,6 +3161,55 @@ impl Item {
             Item::AutoReconnect => e.auto_reconnect = !e.auto_reconnect,
             Item::MouseTweaks => e.mouse_tweaks = !e.mouse_tweaks,
             Item::MouseTweaksWheel => e.mouse_tweaks_wheel = !e.mouse_tweaks_wheel,
+            Item::MotionBlurStrength => {
+                let i = e.motion_blur_strength.clamp(1, 10);
+                e.motion_blur_strength = if back {
+                    if i <= 1 { 10 } else { i - 1 }
+                } else {
+                    if i >= 10 { 1 } else { i + 1 }
+                };
+            }
+            Item::MotionBlurAlgorithm => {
+                let current = crate::motion_blur::Algorithm::from_index(e.motion_blur_algorithm);
+                let next = step(&crate::motion_blur::Algorithm::ALL, current, back);
+                e.motion_blur_algorithm = next.index();
+            }
+            Item::MotionBlurProfile => {
+                let current = crate::motion_blur::Profile::from_index(e.motion_blur_profile);
+                let next = step(&crate::motion_blur::Profile::ALL, current, back);
+                e.motion_blur_profile = next.index();
+            }
+            Item::MotionBlurRefreshScale => {
+                e.motion_blur_refresh_scale = !e.motion_blur_refresh_scale
+            }
+            Item::HitRegReadout => e.hitreg_readout = !e.hitreg_readout,
+            Item::VoltBadgeShow => e.volt_badge_hidden = !e.volt_badge_hidden,
+            Item::VoltBadgeSize => {
+                let list = VOLT_BADGE_SIZES;
+                let idx = list
+                    .iter()
+                    .position(|&v| v == e.volt_badge_size)
+                    .unwrap_or(1);
+                let next = if back {
+                    (idx + list.len() - 1) % list.len()
+                } else {
+                    (idx + 1) % list.len()
+                };
+                e.volt_badge_size = list[next];
+            }
+            Item::VoltBadgeOpacity => {
+                let list = VOLT_BADGE_OPACITIES;
+                let idx = list
+                    .iter()
+                    .position(|&v| v == e.volt_badge_opacity)
+                    .unwrap_or(list.len() - 1);
+                let next = if back {
+                    (idx + list.len() - 1) % list.len()
+                } else {
+                    (idx + 1) % list.len()
+                };
+                e.volt_badge_opacity = list[next];
+            }
             Item::Sort => e.sort = !e.sort,
             Item::NoAi => e.no_ai = !e.no_ai,
             Item::AgentControl => e.agent_control = !e.agent_control,
@@ -3062,6 +3287,7 @@ impl Item {
             Item::FramePlayersDistance => {
                 e.frame_players_distance = step(&FrameDistance::ALL, e.frame_players_distance, back)
             }
+            Item::MergeDropped => e.merge_dropped = !e.merge_dropped,
             Item::FrameDropped => e.frame_dropped = !e.frame_dropped,
             Item::FrameDroppedDistance => {
                 e.frame_dropped_distance = step(&FrameDistance::ALL, e.frame_dropped_distance, back)

@@ -92,12 +92,25 @@ impl Login {
         if let Some(task) = &self.task {
             self.state = Some(task.state());
             if let Some(SignInState::Done(result)) = &self.state {
+                let mut completed = false;
                 self.message = match result {
-                    Ok(a) => format!("Signed in as {}", a.name),
+                    Ok(a) => {
+                        completed = true;
+                        format!(
+                            "Login complete - signed in as {}. Close the browser tab; Volt is ready.",
+                            a.name
+                        )
+                    }
                     Err(e) => e.clone(),
                 };
                 self.task = None;
                 self.refresh_status();
+                // The sign-in happened in the browser: come back to Volt so the
+                // player sees the confirmation instead of Microsoft's closing
+                // page and has to find the app in Recents.
+                if completed {
+                    crate::platform::bring_to_front();
+                }
             }
         }
         if self.auto_open_device && matches!(self.state, Some(SignInState::Code(_))) {

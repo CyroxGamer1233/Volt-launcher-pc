@@ -67,6 +67,10 @@ fn resolve(home: &Path, id: &str) -> io::Result<Document> {
             home.join("profiles").join(format!("profile-{profile}"))
         };
         let (folder, label) = match parts.next() {
+            // Worlds are `saves/` on disk; the launcher calls them worlds,
+            // so the Files app shows "Worlds" rather than a folder name
+            // nobody associates with their worlds.
+            Some("worlds") => ("saves", "Worlds"),
             Some("mods") => ("horizon-mods", "Mods"),
             Some("packs") => ("resourcepacks", "Resource Packs"),
             Some("shaders") => ("shaderpacks", "Shader Packs"),
@@ -167,7 +171,15 @@ fn row(home: &Path, id: &str) -> io::Result<Value> {
 }
 pub fn children(home: &Path, id: &str) -> io::Result<Vec<Value>> {
     if id == ROOT {
-        return ["mods", "packs", "shaders", "recordings", "screenshots", "reports"]
+        return [
+            "worlds",
+            "mods",
+            "packs",
+            "shaders",
+            "recordings",
+            "screenshots",
+            "reports",
+        ]
             .iter()
             .map(|folder| row(home, &folder_id(profile(home), folder)))
             .collect();
@@ -350,13 +362,17 @@ mod tests {
         ));
         fs::create_dir_all(&home).unwrap();
         let roots = children(&home, ROOT).unwrap();
-        assert_eq!(roots.len(), 6);
-        assert_eq!(roots[0]["document_id"], "p0/mods");
+        assert_eq!(roots.len(), 7);
+        // Worlds lead the roots and are `saves/` on disk, so the Files app
+        // shows the folder a player recognises.
+        assert_eq!(roots[0]["document_id"], "p0/worlds");
+        assert_eq!(roots[0]["_display_name"], "Worlds");
+        assert_eq!(resolve(&home, "p0/worlds").unwrap().path, home.join("saves"));
         for id in [
             "../tokens",
             "p0/mods/../account.json",
             "p0/mods/a\\b",
-            "p0/worlds",
+            "p0/saving",
             "p00/mods",
             "p0/mods/.secret",
         ] {
@@ -389,7 +405,11 @@ mod tests {
         );
         assert!(call(&home, "path", "p0/mods/test.hmod", "p0/packs").is_err());
         fs::write(home.join("android-launcher.json"), br#"{"profile":7}"#).unwrap();
-        assert_eq!(children(&home, ROOT).unwrap()[0]["document_id"], "p7/mods");
+        assert_eq!(children(&home, ROOT).unwrap()[0]["document_id"], "p7/worlds");
+        assert_eq!(
+            resolve(&home, "p7/worlds").unwrap().path,
+            home.join("profiles/profile-7/saves")
+        );
         assert!(open(&home, "p0/mods/test.hmod", "r").is_ok());
         #[cfg(unix)]
         {
