@@ -1,0 +1,79 @@
+
+name: Windows PC Build
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - android
+    paths:
+      - ".github/workflows/windows-pc.yml"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "rust-toolchain.toml"
+      - "crates/**"
+      - "launcher/**"
+      - "third_party/**"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-pc-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build original launcher and desktop client
+    runs-on: windows-2022
+    timeout-minutes: 90
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.95.0"
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: windows-x64
+
+      - name: Build original Volt launcher
+        run: cargo build --release --manifest-path launcher/Cargo.toml
+
+      - name: Build native desktop game
+        run: cargo build --release -p horizon-client --bin horizon-client
+
+      - name: Stage executables
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+
+          if (!(Test-Path "launcher/target/release/horizon-launcher.exe")) {
+            throw "Original launcher executable was not generated."
+          }
+
+          if (!(Test-Path "target/release/horizon-client.exe")) {
+            throw "Desktop game executable was not generated."
+          }
+
+          Copy-Item launcher/target/release/horizon-launcher.exe dist/
+          Copy-Item target/release/horizon-client.exe dist/
+
+          Compress-Archive -Path dist/* -DestinationPath Volt-Windows-x64-executables.zip
+
+      - name: Upload Windows executables
+        uses: actions/upload-artifact@v4
+        with:
+          name: Volt-Windows-x64-executables
+          path: |
+            dist/*.exe
+            Volt-Windows-x64-executables.zip
+          if-no-files-found: error
+          retention-days: 14
